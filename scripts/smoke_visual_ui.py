@@ -8,7 +8,7 @@ from playwright.async_api import async_playwright
 ROOT=Path(__file__).resolve().parents[1]
 HTML=(ROOT/'public/index.html').read_text().replace('<link rel="stylesheet" href="/styles.css" />','').replace('<script type="module" src="/app.js"></script>','')
 CSS=(ROOT/'public/styles.css').read_text().split('\n',1)[1]
-APP=(ROOT/'public/app.js').read_text().replace("import {CardClock,dueClues,dragRating,replayReviews} from '/shared/logic.js';",'')
+APP=(ROOT/'public/app.js').read_text().replace("import {CardClock,dueClues,dragRating,replayReviews,isProcedureDeck,orderedProcedureCards} from '/shared/logic.js';",'')
 SHARED=(ROOT/'shared/logic.js').read_text().replace('export ','')
 fixture='data:image/png;base64,'+base64.b64encode((ROOT/'tests/fixtures/axon-sample.png').read_bytes()).decode()
 async def main():

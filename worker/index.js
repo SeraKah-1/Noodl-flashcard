@@ -1,6 +1,8 @@
 import {validateCard,validateDeckInput,validateReview,validateProvenance,validateVisualReview} from './validation.js';
+import {assertProcedureSequence} from '../shared/logic.js';
 import {storePendingImage,fetchAllowedImage,getOwnerMedia,mediaSummary,listOwnerMedia,serveOwnerMedia,readOwnerMediaChunk,approveOwnerMedia,rejectOwnerMedia,issueMediaReviewChallenge,identifyImage} from './media.js';
 import {replayReviews} from '../shared/logic.js';
+import {listFolders,requireFolder,createFolder,renameFolder,moveFolder,deleteFolder,moveDeckToFolder} from './folders.js';
 import {beginChunkedUpload,appendChunkedUpload,finishChunkedUpload,purgeExpiredUploads} from './chunkedUpload.js';
 import {createCandidate,submitSourceCheck,submitVisualCheck,listVisualCandidates,inspectVisualBinding,beginVisualApproval,approveCardVisual,attachCardVisual,assertNoUnapprovedImages,invalidateCardBindings,semanticHash} from './visualValidation.js';
 const uuid=()=>crypto.randomUUID(),now=()=>new Date().toISOString();
@@ -32,17 +34,18 @@ async function uniqueWrite(env,owner,operationId,result,statements){
  return saved;
 }
 async function ownedDeck(db,owner,id){const row=await db.prepare('SELECT * FROM decks WHERE id=? AND owner_id=? AND deleted_at IS NULL').bind(id,owner).first();if(!row)fail('Deck not found',404);return row;}
-async function deckWithCards(db,owner,id){const row=await ownedDeck(db,owner,id);const cards=(await db.prepare('SELECT id,position,content_json FROM cards WHERE owner_id=? AND deck_id=? ORDER BY position').bind(owner,id).all()).results.map(x=>({id:x.id,position:x.position,...JSON.parse(x.content_json)}));return {id:row.id,title:row.title,description:row.description,revision:row.revision,createdAt:row.created_at,updatedAt:row.updated_at,cards};}
-async function listDecks(db,owner){return (await db.prepare('SELECT id,title,description,revision,created_at,updated_at,(SELECT COUNT(*) FROM cards WHERE cards.deck_id=decks.id AND cards.owner_id=?) AS cardCount FROM decks WHERE owner_id=? AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 200').bind(owner,owner).all()).results.map(row=>({id:row.id,title:row.title,description:row.description,revision:row.revision,createdAt:row.created_at,updatedAt:row.updated_at,cardCount:row.cardCount}));}
+async function deckWithCards(db,owner,id){const row=await ownedDeck(db,owner,id);const cards=(await db.prepare('SELECT id,position,content_json FROM cards WHERE owner_id=? AND deck_id=? ORDER BY position').bind(owner,id).all()).results.map(x=>({id:x.id,position:x.position,...JSON.parse(x.content_json)}));return {id:row.id,title:row.title,description:row.description,folderId:row.folder_id??null,revision:row.revision,createdAt:row.created_at,updatedAt:row.updated_at,cards};}
+async function listDecks(db,owner){return (await db.prepare('SELECT id,title,description,folder_id,revision,created_at,updated_at,(SELECT COUNT(*) FROM cards WHERE cards.deck_id=decks.id AND cards.owner_id=?) AS cardCount FROM decks WHERE owner_id=? AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 200').bind(owner,owner).all()).results.map(row=>({id:row.id,title:row.title,description:row.description,folderId:row.folder_id??null,revision:row.revision,createdAt:row.created_at,updatedAt:row.updated_at,cardCount:row.cardCount}));}
 async function reviewHistory(db,owner){return (await db.prepare('SELECT * FROM reviews WHERE owner_id=? ORDER BY reviewed_at ASC LIMIT 5000').bind(owner).all()).results.map(r=>({id:r.id,deckId:r.deck_id,cardId:r.card_id,rating:r.rating,answerRevealed:!!r.revealed,cluesSeen:JSON.parse(r.clues_json),elapsedMs:r.elapsed_ms,timedOut:!!r.timed_out,reviewedAt:r.reviewed_at,undoneAt:r.undone_at}));}
 async function createDeck(env,owner,args){
  const opId=required(args.operationId,'operationId',120);
  const prior=await opReceipt(env.DB,owner,opId);if(prior)return prior;
+ const folderId=await requireFolder(env.DB,owner,args.folderId);
  const input=validateDeckInput(args),id=uuid(),cards=input.cards.map((c,i)=>({id:uuid(),position:i,...c})),time=now();
  for(const card of cards) await assertNoUnapprovedImages(env,owner,null,null,card);
- const result={deckId:id,revision:1,cardCount:cards.length,createdAt:time};
- return uniqueWrite(env,owner,opId,result,{build:r=>[
-  env.DB.prepare(`INSERT INTO decks(id,owner_id,title,description,revision,created_at,updated_at) SELECT ?,?,?,?,1,?,? WHERE ${nonceGuard}`).bind(id,owner,input.title,input.description,time,time,owner,r.id,r.nonce),
+ const result={deckId:id,folderId,revision:1,cardCount:cards.length,createdAt:time};
+ return uniqueWrite(env,owner,opId,result,{...(folderId?{condition:[`WHERE EXISTS(SELECT 1 FROM folders WHERE owner_id=? AND id=? AND deleted_at IS NULL)`,[owner,folderId]]}:{}),build:r=>[
+  env.DB.prepare(`INSERT INTO decks(id,owner_id,title,description,folder_id,revision,created_at,updated_at) SELECT ?,?,?,?,?,1,?,? WHERE ${nonceGuard}`).bind(id,owner,input.title,input.description,folderId,time,time,owner,r.id,r.nonce),
   ...cards.map(c=>env.DB.prepare(`INSERT INTO cards(id,owner_id,deck_id,position,content_json,created_at,updated_at) SELECT ?,?,?,?,?,?,? WHERE ${nonceGuard}`).bind(c.id,owner,id,c.position,JSON.stringify(c),time,time,owner,r.id,r.nonce))
  ]});
 }
@@ -54,6 +57,11 @@ async function appendCards(env,owner,args){
  if(!Array.isArray(args.cards)||args.cards.length<1||args.cards.length>100)fail('Append requires 1..100 cards');
  const cards=args.cards.map(validateCard);for(const card of cards) await assertNoUnapprovedImages(env,owner,null,null,card);
  const oldCount=(await env.DB.prepare('SELECT COUNT(*) AS n FROM cards WHERE owner_id=? AND deck_id=?').bind(owner,id).first()).n;
+ const first=(await env.DB.prepare('SELECT content_json FROM cards WHERE owner_id=? AND deck_id=? ORDER BY position LIMIT 1').bind(owner,id).first());
+ const existingProcedure=!!(first&&JSON.parse(first.content_json).procedureStep);
+ const incomingProcedure=assertProcedureSequence(cards,existingProcedure?oldCount+1:1)==='procedure';
+ if(existingProcedure!==incomingProcedure)fail('Cannot mix OSCE procedure steps with ordinary flashcards in one deck');
+ if(!existingProcedure&&incomingProcedure)fail('Cannot append procedure steps to an ordinary deck');
  if(oldCount+cards.length>1000)fail('A deck can contain at most 1000 cards');
  const time=now(),newCards=cards.map((c,i)=>({id:uuid(),position:oldCount+i,...c}));
  const result={deckId:id,revision:row.revision+1,added:cards.length};
@@ -67,8 +75,13 @@ async function editCard(env,owner,args,remove=false){
  const prev=await opReceipt(env.DB,owner,opId);if(prev)return prev;
  const row=await ownedDeck(env.DB,owner,id);if(row.revision!==args.expectedRevision)fail('Revision changed',409);
  const existing=await env.DB.prepare('SELECT id,position,content_json FROM cards WHERE id=? AND owner_id=? AND deck_id=?').bind(cardId,owner,id).first();if(!existing)fail('Card not found',404);
+ const oldCard=JSON.parse(existing.content_json);
+ if(remove&&oldCard.procedureStep)fail('Deleting a checklist step may silently omit a required action. Create a revised deck instead.');
  if(remove){const count=(await env.DB.prepare('SELECT COUNT(*) AS n FROM cards WHERE owner_id=? AND deck_id=?').bind(owner,id).first()).n;if(count<=1)fail('Deck must keep at least one card');}
- const card=remove?null:validateCard(args.card);if(card)await assertNoUnapprovedImages(env,owner,id,cardId,card);
+ const card=remove?null:validateCard(args.card);
+ if(card&&Boolean(card.procedureStep)!==Boolean(oldCard.procedureStep))fail('Cannot convert a checklist step into an ordinary card or vice versa');
+ if(card?.procedureStep&&card.procedureStep.order!==oldCard.procedureStep.order)fail('Checklist step order cannot change through update_card');
+ if(card)await assertNoUnapprovedImages(env,owner,id,cardId,card);
  const time=now(),result={deckId:id,cardId,revision:row.revision+1,deleted:remove};
  const resultWrite=await uniqueWrite(env,owner,opId,result,{condition:[`WHERE EXISTS(SELECT 1 FROM decks WHERE owner_id=? AND id=? AND revision=? AND deleted_at IS NULL)`,[owner,id,row.revision]],build:r=>[
   env.DB.prepare(`UPDATE decks SET revision=revision+1,updated_at=? WHERE id=? AND owner_id=? AND revision=? AND ${nonceGuard}`).bind(time,id,owner,row.revision,owner,r.id,r.nonce),
@@ -140,7 +153,7 @@ async function importMediaUrl(env,owner,args){
 async function snapshot(env,owner){
  const decks=await listDecks(env.DB,owner);
  const all=await Promise.all(decks.map(d=>deckWithCards(env.DB,owner,d.id)));
- return {ownerId:owner,decks:all,reviews:await reviewHistory(env.DB,owner),media:await listOwnerMedia(env,owner),visualBindings:await listVisualCandidates(env,owner)};
+ return {ownerId:owner,decks:all,folders:await listFolders(env.DB,owner),reviews:await reviewHistory(env.DB,owner),media:await listOwnerMedia(env,owner),visualBindings:await listVisualCandidates(env,owner)};
 }
 const schema={type:'string'},str=(description)=>({...schema,description});
 const tool=(name,description,properties={},required=[],options={})=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false},annotations:{readOnlyHint:!!options.readOnly,destructiveHint:!!options.destructive,idempotentHint:true},_meta:{ui:{visibility:options.appOnly?['app']:['model','app'],...(options.opens?{resourceUri:'ui://noodl-flashcards/workspace'}:{})},...(options.fileParam?{'openai/fileParams':['file']}:{})}});
@@ -149,10 +162,16 @@ const imageFileSchema={type:'object',properties:{download_url:schema,file_id:sch
 export const TOOLS=[
  tool('get_capabilities','List supported flashcard creation, timer, clues, storage, image-review and media limits.',{},[],{readOnly:true}),
  tool('list_decks','List private flashcard decks for the current ChatGPT account.',{},[],{readOnly:true}),
+ tool('list_folders','List the current account’s nested folders (including empty folders); deck contents are unchanged.',{},[],{readOnly:true}),
+ tool('create_folder','Create a folder under a parent folder, or at root when parentId is omitted. Maximum six nesting levels.',{...op,name:schema,parentId:{type:['string','null']}},['operationId','name']),
+ tool('rename_folder','Rename one folder with revision protection; cards and decks remain intact.',{...op,folderId:schema,expectedRevision:{type:'integer',minimum:1},name:schema},['operationId','folderId','expectedRevision','name']),
+ tool('move_folder','Move a folder to root or another folder; rejects cycles and excessive nesting.',{...op,folderId:schema,expectedRevision:{type:'integer',minimum:1},parentId:{type:['string','null']}},['operationId','folderId','expectedRevision']),
+ tool('delete_folder','Delete the folder shell only. Moves child folders and decks to its parent; never deletes cards or study history.',{...op,folderId:schema,expectedRevision:{type:'integer',minimum:1}},['operationId','folderId','expectedRevision'],{destructive:true}),
+ tool('move_deck_to_folder','Move an existing deck to a selected folder or root without changing cards or review history.',{...op,...deckFields,folderId:{type:['string','null']}},['operationId','deckId','expectedRevision']),
  tool('get_deck','Read full flashcard deck including all cards and source references.',{deckId:schema},['deckId'],{readOnly:true}),
- tool('create_deck','Create a deck with 1..100 flashcards. ChatGPT writes three progressive clues for every card. Add images to saved cards via the card-specific visual validation workflow.',{...op,title:schema,description:schema,cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','title','cards'],{opens:true}),
- tool('append_cards','Append 1..100 validated cards; the current deck revision is required.',{...op,...deckFields,cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','deckId','expectedRevision','cards']),
- tool('update_card','Replace a card using the latest deck revision.',{...op,...deckFields,cardId:schema,card:{type:'object',additionalProperties:true}},['operationId','deckId','expectedRevision','cardId','card'],{destructive:true}),
+ tool('create_deck','Create a deck with 1..100 flashcards, optionally inside folderId. For normal cards write three clues. Use back for the concise answer, optional explanation.sections[] for long explanations (each section has heading and blocks). Legacy long back text remains fully readable via the reader. For an OSCE checklist supply ordered procedureStep metadata on ALL cards; clues may be empty. Images require approved per-card bindings.',{...op,title:schema,description:schema,folderId:{type:['string','null']},cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','title','cards'],{opens:true}),
+ tool('append_cards','Append 1..100 validated cards in sequence; OSCE procedure steps must continue at the next position without gaps.',{...op,...deckFields,cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','deckId','expectedRevision','cards']),
+ tool('update_card','Replace a card using the latest deck revision; optional explanation.sections add long-form material without truncating back.',{...op,...deckFields,cardId:schema,card:{type:'object',additionalProperties:true}},['operationId','deckId','expectedRevision','cardId','card'],{destructive:true}),
  tool('delete_card','Delete a card. A deck must keep at least one card.',{...op,...deckFields,cardId:schema},['operationId','deckId','expectedRevision','cardId'],{destructive:true}),
  tool('rename_deck','Change title/description without overwriting cards.',{...op,...deckFields,title:schema,description:schema},['operationId','deckId','expectedRevision','title']),
  tool('delete_deck','Soft-delete one deck. Does not delete other decks or unrelated media.',{...op,...deckFields},['operationId','deckId','expectedRevision'],{destructive:true}),
@@ -182,8 +201,14 @@ export const TOOLS=[
 ];
 export async function callTool(name,env,owner,args={}){
  switch(name){
-  case 'get_capabilities':return {version:'0.4.0',content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'human_preview_required',mediaUploadFallback:'app_chunked_mcp',chunkBytes:98304,preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
+  case 'get_capabilities':return {version:'0.7.0',procedureDecks:{ordered:true,cardLevelSource:true,untimed:true,unhintedSequenceRecall:true,separateQuizEngine:false},folders:{nested:true,maximumDepth:6,safeDelete:true,mcpTools:true},layeredCards:{fullScroll:true,explanationSections:true,readerPanel:true,legacyBackPreserved:true},content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'human_preview_required',mediaUploadFallback:'app_chunked_mcp',chunkBytes:98304,preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
   case 'list_decks':return {decks:await listDecks(env.DB,owner)};
+  case 'list_folders':return {folders:await listFolders(env.DB,owner)};
+  case 'create_folder':return await createFolder(env,owner,args);
+  case 'rename_folder':return await renameFolder(env,owner,args);
+  case 'move_folder':return await moveFolder(env,owner,args);
+  case 'delete_folder':return await deleteFolder(env,owner,args);
+  case 'move_deck_to_folder':return await moveDeckToFolder(env,owner,args);
   case 'get_deck':return await deckWithCards(env.DB,owner,required(args.deckId,'deckId'));
   case 'create_deck':return await createDeck(env,owner,args);
   case 'append_cards':return await appendCards(env,owner,args);
@@ -226,7 +251,7 @@ export async function handleMcp(req,env){
  const id=rpc.id??null;let result;
  switch(rpc.method){
   case 'server/discover':result={supportedVersions:['2026-07-28'],capabilities:{tools:{},resources:{}}};break;
-  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.4.0'}};break;
+  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.7.0'}};break;
   case 'notifications/initialized':return new Response(null,{status:202});
   case 'ping':result={};break;
   case 'tools/list':result={tools:TOOLS};break;
@@ -255,6 +280,12 @@ export async function handleApi(req,env){
   const origin=req.headers.get('origin');if(origin&&origin!==url.origin)fail('Invalid origin',403);
  }
  if(req.method==='GET'&&path==='/api/snapshot')return replyJson(await snapshot(env,owner));
+ if(req.method==='GET'&&path==='/api/folders')return replyJson({folders:await listFolders(env.DB,owner)});
+ if(req.method==='POST'&&path==='/api/folders')return replyJson(await createFolder(env,owner,await parseBody(req)),201);
+ if(req.method==='POST'&&path==='/api/folders/rename')return replyJson(await renameFolder(env,owner,await parseBody(req)));
+ if(req.method==='POST'&&path==='/api/folders/move')return replyJson(await moveFolder(env,owner,await parseBody(req)));
+ if(req.method==='POST'&&path==='/api/folders/delete')return replyJson(await deleteFolder(env,owner,await parseBody(req)));
+ if(req.method==='POST'&&path==='/api/folders/move-deck')return replyJson(await moveDeckToFolder(env,owner,await parseBody(req)));
  if(req.method==='GET'&&path==='/api/media')return replyJson({media:await listOwnerMedia(env,owner)});
   if(req.method==='GET'&&path==='/api/visual')return replyJson({visualBindings:await listVisualCandidates(env,owner)});
   if(req.method==='POST'&&path==='/api/visual/candidates')return replyJson(await createCandidate(env,owner,await parseBody(req)),201);

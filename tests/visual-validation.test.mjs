@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import {Dat
 import {callTool} from '../worker/index.js';
 import {storePendingImage,issueMediaReviewChallenge,approveOwnerMedia} from '../worker/media.js';
 function env(){
- const sql=new DatabaseSync(':memory:');sql.exec('PRAGMA foreign_keys=ON;');sql.exec(readFileSync('migrations/0001.sql','utf8'));sql.exec(readFileSync('migrations/0002_visual_validation.sql','utf8'));
+ const sql=new DatabaseSync(':memory:');sql.exec('PRAGMA foreign_keys=ON;');sql.exec(readFileSync('migrations/0001.sql','utf8'));sql.exec(readFileSync('migrations/0002_visual_validation.sql','utf8'));sql.exec(readFileSync('migrations/0004_folders.sql','utf8'));
  const prepare=q=>({bind(...args){return {first:async()=>sql.prepare(q).get(...args),all:async()=>({results:sql.prepare(q).all(...args)}),run:async()=>sql.prepare(q).run(...args),sql:q,args};}});
  const DB={prepare,async batch(statements){sql.exec('BEGIN');try{const r=statements.map(s=>sql.prepare(s.sql).run(...s.args));sql.exec('COMMIT');return r}catch(e){sql.exec('ROLLBACK');throw e}}};
  const data=new Map(),MEDIA={put:async(k,b)=>data.set(k,b),get:async k=>data.has(k)?{body:new Blob([data.get(k)]).stream()}:null,delete:async k=>data.delete(k)};

@@ -1,11 +1,11 @@
-import {CardClock,dueClues,dragRating,replayReviews} from '/shared/logic.js';
+import {CardClock,dueClues,dragRating,replayReviews,isProcedureDeck,orderedProcedureCards} from '/shared/logic.js';
 // For static hosting, shared logic is copied at /shared/logic.js by build/deployment.
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const main=$('#main'),modalRoot=$('#modalRoot');
 const uuid=()=>crypto.randomUUID();
 const safe=s=>String(s??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const defaults={sound:true,haptics:true,timer:true,clues:true,reducedMotion:false,showSource:true};
-const state={route:'home',backend:'local',ownerId:'local',decks:[],reviews:[],media:[],visualBindings:[],queue:[],settings:{...defaults},session:null,modal:null,search:'',busy:false,prevReview:null,initialized:false};
+const state={route:'home',backend:'local',ownerId:'local',decks:[],folders:[],activeFolderId:null,reviews:[],media:[],visualBindings:[],queue:[],settings:{...defaults},session:null,modal:null,search:'',busy:false,prevReview:null,initialized:false};
 let store=null,toastTimer=null,rafId=null;
 const mediaFallbackPending=new Map(),mediaFallbackFailed=new Set();
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),3400);}
@@ -17,7 +17,7 @@ async function openStore(owner){
 }
 async function dbGet(key){if(!store)return undefined;return new Promise((resolve,reject)=>{const tx=store.transaction('kv','readonly'),q=tx.objectStore('kv').get(key);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});}
 async function dbSet(key,value){if(!store)return;return new Promise((resolve,reject)=>{const tx=store.transaction('kv','readwrite');tx.objectStore('kv').put(value,key);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);});}
-async function persist(){await dbSet('state',{decks:state.decks,reviews:state.reviews,media:state.backend==='local'?state.media:state.media.map(({dataUrl,...meta})=>meta),visualBindings:state.visualBindings,queue:state.queue,settings:state.settings});}
+async function persist(){await dbSet('state',{decks:state.decks,folders:state.folders,reviews:state.reviews,media:state.backend==='local'?state.media:state.media.map(({dataUrl,...meta})=>meta),visualBindings:state.visualBindings,queue:state.queue,settings:state.settings});}
 function demoDeck(){return {id:'demo-noodl',title:'Sistem Saraf — Demo',description:'Kartu contoh untuk menguji swipe, timer, clue, dan review.',revision:1,updatedAt:new Date().toISOString(),cards:[
  {id:'demo-1',front:[{type:'text',text:'Apa fungsi utama mielin pada akson neuron?'}],back:[{type:'text',text:'Meningkatkan kecepatan hantaran impuls melalui konduksi saltatori.'}],clues:[{atSecond:5,text:'Berhubungan dengan lapisan pembungkus akson.'},{atSecond:10,text:'Fokus pada kecepatan rambat sinyal.'},{atSecond:15,text:'Impuls melompat antar nodus Ranvier.'}],timerSeconds:20,tags:['Neuroanatomi']},
  {id:'demo-2',front:[{type:'text',text:'Bagian neuron apa yang biasanya menerima sinyal dari sel lain?'}],back:[{type:'text',text:'Dendrit; sinyal kemudian diintegrasikan menuju badan sel.'}],clues:[{atSecond:5,text:'Struktur berbentuk cabang.'},{atSecond:10,text:'Letaknya di sekitar soma.'},{atSecond:15,text:'Namanya dimulai dengan huruf D.'}],timerSeconds:20,tags:['Neuroanatomi']},
@@ -25,6 +25,7 @@ function demoDeck(){return {id:'demo-noodl',title:'Sistem Saraf — Demo',descri
  {id:'demo-4',front:[{type:'text',text:'Di mana impuls saraf mulai dipicu pada sebagian besar neuron?'}],back:[{type:'text',text:'Segmen awal akson, dekat axon hillock.'}],clues:[{atSecond:5,text:'Bukan di ujung dendrit.'},{atSecond:10,text:'Berdekatan dengan badan sel.'},{atSecond:15,text:'Daerah pemicu potensial aksi di awal akson.'}],timerSeconds:20,tags:['Fisiologi']},
  {id:'demo-5',front:[{type:'text',text:'Apa fungsi sel Schwann pada sistem saraf perifer?'}],back:[{type:'text',text:'Membentuk mielin pada akson sistem saraf perifer dan membantu regenerasi.'}],clues:[{atSecond:5,text:'Termasuk sel glia.'},{atSecond:10,text:'Berkaitan dengan mielin di saraf perifer.'},{atSecond:15,text:'Bukan oligodendrosit.'}],timerSeconds:20,tags:['Neuroanatomi']}
  ]};}
+function procedureDemoDeck(){return {"title":"DEMO — Format Tilik OSCE (bukan tilik resmi)","description":"Contoh struktur metadata, bukan checklist lengkap untuk praktik klinis atau ujian. Ganti SELURUH teks dan sumber dengan tilik fakultas yang kamu pakai.","cards":[{"front":[{"type":"text","text":"Apa yang perlu dilakukan pada langkah 1 menurut tilik?"}],"back":[{"type":"text","text":"Sapa pasien dan perkenalkan diri sesuai standar komunikasi pada tilik resmi."}],"clues":[],"timerSeconds":20,"tags":["DEMO","Tilik"],"procedureStep":{"order":1,"checklistItem":"Contoh butir 1","phase":"Pembukaan","critical":false,"sourceDocument":"DEMO SAJA - ganti dengan PDF tilik resmi","sourcePage":null},"id":"demo-tilik-1","position":0},{"front":[{"type":"text","text":"Apa yang perlu dilakukan pada langkah 2 menurut tilik?"}],"back":[{"type":"text","text":"Konfirmasi identitas pasien menurut prosedur lembaga sebelum tindakan."}],"clues":[],"timerSeconds":20,"tags":["DEMO","Tilik"],"procedureStep":{"order":2,"checklistItem":"Contoh butir 2","phase":"Pembukaan","critical":false,"sourceDocument":"DEMO SAJA - ganti dengan PDF tilik resmi","sourcePage":null},"id":"demo-tilik-2","position":1},{"front":[{"type":"text","text":"Apa yang perlu dilakukan pada langkah 3 menurut tilik?"}],"back":[{"type":"text","text":"Jelaskan tujuan dan langkah umum tindakan dengan bahasa yang dipahami pasien."}],"clues":[],"timerSeconds":20,"tags":["DEMO","Tilik"],"procedureStep":{"order":3,"checklistItem":"Contoh butir 3","phase":"Penjelasan","critical":false,"sourceDocument":"DEMO SAJA - ganti dengan PDF tilik resmi","sourcePage":null},"id":"demo-tilik-3","position":2},{"front":[{"type":"text","text":"Apa yang perlu dilakukan pada langkah 4 menurut tilik?"}],"back":[{"type":"text","text":"Minta persetujuan tindakan sesuai kebijakan setempat, sebelum memulai pemeriksaan."}],"clues":[],"timerSeconds":20,"tags":["DEMO","Tilik"],"procedureStep":{"order":4,"checklistItem":"Contoh butir 4","phase":"Persetujuan","critical":false,"sourceDocument":"DEMO SAJA - ganti dengan PDF tilik resmi","sourcePage":null},"id":"demo-tilik-4","position":3},{"front":[{"type":"text","text":"Apa yang perlu dilakukan pada langkah 5 menurut tilik?"}],"back":[{"type":"text","text":"Beri kesempatan bertanya, sampaikan langkah berikutnya, dan tutup interaksi dengan sopan."}],"clues":[],"timerSeconds":20,"tags":["DEMO","Tilik"],"procedureStep":{"order":5,"checklistItem":"Contoh butir 5","phase":"Penutupan","critical":false,"sourceDocument":"DEMO SAJA - ganti dengan PDF tilik resmi","sourcePage":null},"id":"demo-tilik-5","position":4}],"id":"demo-osce-tilik","revision":1};}
 function looksEmbedded(){return window.parent!==window||new URLSearchParams(location.search).get('embedded')==='1'}
 function normalizeToolResult(result){if(result?.isError)throw Error(result?.content?.map?.(x=>x.text).join('\n')||'MCP tool failed');return result?.structuredContent??result?.result?.structuredContent??result;}
 async function hostCall(name,args={}){if(window.openai?.callTool)return normalizeToolResult(await window.openai.callTool(name,args));throw Error('Embedded host tool API not available');}
@@ -40,8 +41,8 @@ async function initialize(){
   const cached=await dbGet('state')||{};
   state.queue=cached.queue||[];state.settings={...defaults,...cached.settings};
   if(cloud){state.backend=cloud.backend;const pending=state.queue.filter(q=>q.kind==='review').map(q=>q.payload);
-   state.decks=cloud.data.decks||[];state.reviews=[...(cloud.data.reviews||[]),...pending.filter(p=>!(cloud.data.reviews||[]).some(x=>x.id===p.operationId)).map(p=>({...p,id:p.operationId,reviewedAt:p.reviewedAt||new Date().toISOString()}))];state.media=cloud.data.media||[];state.visualBindings=cloud.data.visualBindings||[];
-  }else{state.backend='local';state.decks=cached.decks||[demoDeck()];state.reviews=cached.reviews||[];state.media=cached.media||[];state.visualBindings=cached.visualBindings||[];}
+   state.decks=cloud.data.decks||[];state.folders=cloud.data.folders||[];state.reviews=[...(cloud.data.reviews||[]),...pending.filter(p=>!(cloud.data.reviews||[]).some(x=>x.id===p.operationId)).map(p=>({...p,id:p.operationId,reviewedAt:p.reviewedAt||new Date().toISOString()}))];state.media=cloud.data.media||[];state.visualBindings=cloud.data.visualBindings||[];
+  }else{state.backend='local';state.decks=cached.decks||[demoDeck(),procedureDemoDeck()];state.folders=cached.folders||[];state.reviews=cached.reviews||[];state.media=cached.media||[];state.visualBindings=cached.visualBindings||[];}
   state.initialized=true;await persist();renderStatus();applySettings();navigate(location.hash.slice(1)||'home');
   if(state.backend!=='local')void flushQueue();
  }catch(e){main.innerHTML=`<div class="empty"><h2>Data lokal tidak tersedia</h2><p>${safe(e.message)}</p><button class="button secondary" id="retryInit">Coba lagi</button></div>`;$('#retryInit')?.addEventListener('click',initialize);}
@@ -57,12 +58,37 @@ function navigate(to){
  $$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.nav===to));
  render();
 }
-function deckTile(deck){return `<button class="deck-tile" data-open-deck="${safe(deck.id)}"><span class="deck-icon">▧</span><div><h3>${safe(deck.title)}</h3><p>${safe(deck.description||'Kumpulan flashcard untuk belajar aktif.')}</p></div><div class="tile-foot"><span>${(deck.cards||[]).length} kartu</span><span>Buka ↗</span></div></button>`}
+function deckTile(deck){return `<button class="deck-tile" data-open-deck="${safe(deck.id)}"><span class="deck-icon">▧</span><div><h3>${safe(deck.title)}${isProcedureDeck(deck.cards)?' <span class="mini-procedure">TILIK · URUT</span>':''}</h3><p>${safe(deck.description||'Kumpulan flashcard untuk belajar aktif.')}</p></div><div class="tile-foot"><span>${(deck.cards||[]).length} kartu</span><span>Buka ↗</span></div></button>`}
 function renderHome(){const m=summary(),recent=state.decks.slice(0,3);
  return `<div class="screen"><section class="hero"><div><span class="kicker">✦ YOUR LITTLE STUDY SPACE</span><h1>Belajar dikit.<br><span>Ingat lama.</span></h1><p>Satu kartu, satu ide. Geser kapan saja, intip petunjuk bertahap, lalu ulangi yang belum menempel di kepala.</p><div class="hero-actions"><button class="button primary" data-nav="review">◈ Mulai review</button><button class="button secondary" data-chat="1">✧ Buat dengan ChatGPT</button></div></div><div class="hero-card"><div class="hero-mascot">( ◕ ‿ ◕ )</div><small>YOU'VE GOT THIS ✦</small><p>Jangan buru-buru membaliknya. Biar otak mencoba dulu.</p></div></section><section class="stats"><div class="stat"><div class="number">${m.decks}</div><div class="label">Deck tersimpan</div></div><div class="stat"><div class="number">${m.cards}</div><div class="label">Total flashcard</div></div><div class="stat"><div class="number">${m.due}</div><div class="label">Siap direview</div></div></section><div class="split-head"><div><h2 class="section-heading">Kartu yang menemanimu</h2><p class="section-sub">Deck terbaru di perpustakaanmu.</p></div><button class="muted-link" data-nav="library">Lihat semua →</button></div>${recent.length?`<div class="deck-grid">${recent.map(deckTile).join('')}</div>`:`<div class="empty"><div class="empty-face">(・_・;)</div><h3>Belum ada deck</h3><p>Minta ChatGPT membuat flashcard dan menyimpannya melalui MCP.</p><button class="button primary" data-chat="1">Buat deck baru ✧</button></div>`}<p class="tagline">NOODL FLASHCARDS · CREATED WITH CHATGPT, REMEMBERED BY YOU</p></div>`;
 }
-function renderLibrary(){const filtered=state.decks.filter(d=>(d.title+' '+d.description).toLowerCase().includes(state.search.toLowerCase()));
- return `<div class="screen"><div style="padding-top:38px"><span class="kicker">YOUR COLLECTION</span><h1 class="page-title">My decks <span style="color:var(--violet)">✦</span></h1><p class="page-intro">Semuanya tersimpan rapi. Tidak ada bank soal atau pengaturan generator yang numpang hidup di sini.</p></div><div class="library-tools"><input class="search" id="deckSearch" placeholder="Cari deck..." value="${safe(state.search)}" aria-label="Cari deck"/><button class="button primary" data-chat="1">✧ Deck baru</button></div>${filtered.length?`<div class="deck-grid">${filtered.map(deckTile).join('')}</div>`:`<div class="empty"><p>Deck tidak ditemukan.</p></div>`}<div class="notice">${state.backend==='local'?'Kamu sedang memakai mode lokal. Contoh deck dan progres review tersimpan di browser ini. Hubungkan deployment MCP agar ChatGPT dapat menyimpan deck ke akun yang sama.':'Deck dari ChatGPT tersinkronkan ke akun yang sedang terhubung. Gambar yang belum disetujui tidak dapat digunakan sebagai isi kartu.'}</div></div>`;
+function folderPath(folderId){
+ const parts=[],seen=new Set();let cursor=folderId;
+ while(cursor){if(seen.has(cursor)||parts.length>8)break;seen.add(cursor);const folder=state.folders.find(f=>f.id===cursor);if(!folder)break;parts.unshift(folder);cursor=folder.parentId;}
+ return parts;
+}
+function folderList(){return state.folders.slice().sort((a,b)=>a.name.localeCompare(b.name,'id'));}
+function folderOptions(selected=null,forFolderId=null){
+ const blocked=new Set();if(forFolderId){blocked.add(forFolderId);for(const f of state.folders)if(folderPath(f.id).some(p=>p.id===forFolderId))blocked.add(f.id);}
+ return `<option value="" ${selected==null?'selected':''}>⌂ Tanpa folder (root)</option>`+folderList().filter(f=>!blocked.has(f.id)).map(f=>{
+ const chain=folderPath(f.id);return `<option value="${safe(f.id)}" ${selected===f.id?'selected':''}>${safe('　'.repeat(Math.max(0,chain.length-1))+'📁 '+chain.map(x=>x.name).join(' / '))}</option>`;
+ }).join('');
+}
+function folderTile(f){
+ const deckCount=state.decks.filter(d=>d.folderId===f.id).length,subCount=state.folders.filter(d=>d.parentId===f.id).length;
+ return `<div class="folder-tile"><button class="folder-open" type="button" data-open-folder="${safe(f.id)}"><span class="folder-symbol">📁</span><span class="folder-info"><strong>${safe(f.name)}</strong><small>${deckCount} deck · ${subCount} subfolder</small></span><span class="folder-arrow">›</span></button><div class="folder-actions"><button type="button" data-folder-action="rename" data-folder-id="${safe(f.id)}" aria-label="Ganti nama folder ${safe(f.name)}">Rename</button><button type="button" data-folder-action="move" data-folder-id="${safe(f.id)}" aria-label="Pindahkan folder ${safe(f.name)}">Pindah</button><button type="button" data-folder-action="delete" data-folder-id="${safe(f.id)}" aria-label="Hapus folder ${safe(f.name)}">Hapus</button></div></div>`;
+}
+function deckTileWithMove(d){return `<div class="deck-wrapper">${deckTile(d)}<button type="button" class="deck-move-action" data-move-deck="${safe(d.id)}" aria-label="Pindahkan deck ${safe(d.title)}">↗ Pindahkan</button></div>`;}
+function renderLibraryContents(){
+ const query=state.search.trim().toLowerCase();
+ const folders=query?state.folders.filter(f=>f.name.toLowerCase().includes(query)):state.folders.filter(f=>f.parentId===state.activeFolderId);
+ const decks=state.decks.filter(d=>query?(d.title+' '+d.description).toLowerCase().includes(query):(d.folderId??null)===state.activeFolderId);
+ return `<section class="folder-section"><div class="folder-section-head"><h2 class="section-heading">Folder <span class="chip">${folders.length}</span></h2>${!query?`<span class="note">Klik folder untuk membuka</span>`:''}</div>${folders.length?`<div class="folder-grid">${folders.map(folderTile).join('')}</div>`:'<p class="folder-empty">Belum ada folder di lokasi ini.</p>'}</section><section class="folder-section"><div class="folder-section-head"><h2 class="section-heading">Flashcard deck <span class="chip">${decks.length}</span></h2></div>${decks.length?`<div class="deck-grid">${decks.map(deckTileWithMove).join('')}</div>`:'<div class="empty"><p>Belum ada deck di lokasi ini. Deck yang dipindahkan tetap mempertahankan seluruh kartu dan progres.</p></div>'}</section>`;
+}
+function renderLibrary(){
+ const path=folderPath(state.activeFolderId);if(state.activeFolderId&&!path.some(f=>f.id===state.activeFolderId))state.activeFolderId=null;
+ const crumbs=`<nav class="folder-crumbs" aria-label="Lokasi folder"><button type="button" data-open-folder="">⌂ Semua folder</button>${path.map(f=>`<span>›</span><button type="button" data-open-folder="${safe(f.id)}">${safe(f.name)}</button>`).join('')}</nav>`;
+ return `<div class="screen"><div style="padding-top:38px"><span class="kicker">YOUR COLLECTION</span><h1 class="page-title">My decks <span style="color:var(--violet)">✦</span></h1><p class="page-intro">Folder bertingkat untuk merapikan deck. Kartu, gambar yang disetujui, dan progres belajarmu tetap utuh saat deck dipindah.</p></div>${crumbs}<div class="library-tools"><input class="search" id="deckSearch" placeholder="Cari folder atau deck..." value="${safe(state.search)}" aria-label="Cari folder atau deck"/><button type="button" class="button secondary" data-folder-action="create">＋ Folder baru</button><button class="button primary" data-chat="1">✧ Deck baru</button></div><div id="libraryContents">${renderLibraryContents()}</div><div class="notice">${state.backend==='local'?'Mode lokal: struktur folder disimpan pada IndexedDB di browser ini. Folder cloud baru aktif setelah Worker v0.5 dideploy.':'Folder dan pemindahan deck disimpan ke akun Noodl melalui MCP; tidak mengubah progres review.'}</div></div>`;
 }
 function renderReview(){const m=summary();return `<div class="screen narrow"><div style="padding-top:38px"><span class="kicker">PRACTICE MAKES PERMANENT</span><h1 class="page-title">Review <span style="color:var(--violet)">◈</span></h1><p class="page-intro">Tidak harus menunggu jawaban terbuka untuk swipe. Sebelum dibalik, rating hanyalah penilaian diri—bukan bukti benar.</p></div><section class="stats"><div class="stat"><div class="number">${m.due}</div><div class="label">Perlu review</div></div><div class="stat"><div class="number">${m.studied}</div><div class="label">Pernah dipelajari</div></div><div class="stat"><div class="number">${m.cards}</div><div class="label">Semua kartu</div></div></section><div class="settings-panel"><h3>Pilih deck</h3>${state.decks.length?state.decks.map(d=>`<div class="media-row"><div class="deck-icon">▧</div><div class="summary"><strong>${safe(d.title)}</strong><small>${d.cards.length} kartu</small></div><button class="button secondary" data-start-deck="${safe(d.id)}">Belajar →</button></div>`).join(''):'<p>Belum ada deck.</p>'}</div><div class="notice">Clue muncul pada detik ke-5, 10, dan 15. Pada detik ke-20, timer berhenti tanpa menilai kartu secara otomatis. Saat tab tidak aktif, waktu dijeda.</div></div>`;}
 function renderSettings(){return `<div class="screen narrow"><div style="padding-top:38px"><span class="kicker">MAKE IT YOURS</span><h1 class="page-title">Settings ⚙</h1><p class="page-intro">Noodl sesederhana yang diperlukan. Sesuaikan cara belajarnya.</p></div><div class="settings-panel"><h3>Pengalaman flashcard</h3>${[['timer','Timer 20 detik','Jeda saat tab tak terlihat atau jawaban dibuka.'],['clues','Tiga clue bertahap','Clue pada detik 5, 10, dan 15.'],['sound','Sound feedback','Efek suara pendek saat berinteraksi.'],['haptics','Getaran ringan','Hanya jika didukung perangkat.'],['reducedMotion','Kurangi animasi','Kurangi efek flip dan gerakan.'],['showSource','Tampilkan sumber gambar','Sumber, lisensi, dan status review.']].map(([key,label,desc])=>`<label class="toggle-row"><div><strong>${label}</strong><p>${desc}</p></div><input type="checkbox" data-setting="${key}" ${state.settings[key]?'checked':''}/></label>`).join('')}</div><div class="settings-panel"><h3>Media & pemeriksaan visual</h3><p class="note">Gambar wajib diverifikasi format, dimensi, dan kecocokan visual. Tanpa persetujuan pratinjau, kartu tidak boleh menggunakan aset baru.</p><div class="upload"><input id="mediaFile" type="file" accept="image/png,image/jpeg,image/webp" multiple aria-label="Unggah satu atau beberapa gambar"/><button class="button secondary" id="uploadMedia">Unggah gambar</button></div><div id="mediaList">${state.media.length?state.media.map(mediaRow).join(''):'<p class="note">Belum ada gambar. Unggah PNG, JPEG atau WebP.</p>'}</div></div><div class="settings-panel"><h3>Pemeriksaan gambar per kartu</h3><p class="note">Persetujuan aset belum membuktikan kecocokannya dengan sebuah kartu. Dua laporan sumber dan visual harus diikuti persetujuanmu untuk kartu tertentu.</p><div id="visualBindingList">${state.visualBindings.length?state.visualBindings.map(bindingRow).join(''):'<p class="note">Belum ada kandidat. Pilih tombol Pasang pada gambar yang sudah disetujui, lalu minta ChatGPT melakukan dua pemeriksaan MCP.</p>'}</div></div><div class="settings-panel"><h3>Akun & penyimpanan</h3><p class="note">Status: <strong>${state.backend==='local'?'Lokal / browser':state.backend==='embedded'?'ChatGPT MCP':'Cloud'}</strong>. Database lokal dipisah berdasarkan identitas akun. Media cloud tersimpan di bucket privat.</p><button class="button secondary" id="refreshData">↻ Sinkronkan sekarang</button><button class="button secondary" id="exportLocal" style="margin-left:7px">Ekspor data JSON</button></div></div>`;}
@@ -128,36 +154,68 @@ function blocksHtml(blocks){return (blocks||[]).map(b=>{
  }
  return '';
  }).join('')}
+/** Render the optional deep-reading layer without removing the full, original back text. */
+function explanationHtml(card){
+ const sections=card?.explanation?.sections;
+ if(!Array.isArray(sections)||!sections.length)return '';
+ return `<section class="reader-explanation" aria-label="Pembahasan lengkap"><div class="reader-section-heading">PEMBAHASAN LENGKAP</div>${sections.map((section,i)=>`<section class="reader-section"><h3>${safe(section.heading||`Bagian ${i+1}`)}</h3>${blocksHtml(section.blocks||[])}</section>`).join('')}</section>`;
+}
+function hasExplanation(card){return !!card?.explanation?.sections?.length;}
+function openCardReader(side='back'){
+ const s=state.session,card=playerCard();if(!s||!card||s.processing)return;
+ if(!['front','back'].includes(side))side='back';
+ // Opening the question reader must never reveal the answer behind a face-down card.
+ if(side==='back'&&!s.flipped)side='front';
+ if(s.clock&&playerTimerEnabled(s))s.clock.pause(clockMs());
+ state.modal={kind:'card-reader',side};
+ document.body.classList.add('reading-open');
+ const heading=side==='front'?'Pertanyaan lengkap':'Jawaban & pembahasan';
+ const step=card.procedureStep;
+ const source=side==='back'&&step?`<div class="reader-source"><strong>Butir tilik ${step.order}:</strong> ${safe(step.checklistItem)}${step.critical?' · Langkah kritis':''}<br>Sumber: ${safe(step.sourceDocument)}${step.sourcePage?' · halaman '+step.sourcePage:''}</div>`:'';
+ const surface=()=>`<div class="reader-content" id="readerContent" tabindex="0" role="region" aria-label="Teks lengkap, dapat digulir"><div class="reader-text">${source}${blocksHtml(card[side])}${side==='back'?explanationHtml(card):''}</div><div class="reader-end">Akhir ${side==='back'?'jawaban':'pertanyaan'} · semua materi di atas dapat digulir</div></div>`;
+ modalRoot.innerHTML=`<div class="reader-overlay" id="readerOverlay"><div class="reader-backdrop" data-close-reader></div><section class="reader-panel" role="dialog" aria-modal="true" aria-labelledby="readerTitle"><div class="reader-top"><div><div class="kicker">LAYERED FLASHCARD</div><h2 id="readerTitle">${heading}</h2><p> ${safe(s.deck.title)} · kartu ${s.index+1}/${s.cards.length}</p></div><button type="button" class="button secondary" id="readerClose" aria-label="Tutup pembahasan">✕ Tutup</button></div><div class="reader-tabs" role="group" aria-label="Bagian kartu"><button class="reader-tab ${side==='front'?'selected':''}" data-reader-side="front" aria-pressed="${side==='front'}">Pertanyaan</button><button class="reader-tab ${side==='back'?'selected':''}" data-reader-side="back" aria-pressed="${side==='back'}" ${!s.flipped?'disabled title="Balik kartu dahulu untuk membuka jawaban"':''}>Jawaban${hasExplanation(card)?' + Detail':''}</button></div>${surface()}<div class="reader-bottom"><span>Geser ke atas/bawah untuk membaca · swipe kartu dijeda</span><button type="button" class="button primary" id="readerDone">Kembali ke kartu</button></div></section></div>`;
+ const content=$('#readerContent');if(content)content.scrollTop=0;
+ $('#readerClose')?.addEventListener('click',closeModal);
+ $('#readerDone')?.addEventListener('click',closeModal);
+ $('#readerOverlay [data-close-reader]')?.addEventListener('click',closeModal);
+ $$('.reader-tab').forEach(el=>el.addEventListener('click',()=>{if(el.dataset.readerSide!==state.modal?.side)openCardReader(el.dataset.readerSide)}));
+ $('#readerContent')?.focus({preventScroll:true});
+}
 function startDeck(id,onlyDue=false){const deck=state.decks.find(x=>x.id===id);if(!deck||!deck.cards?.length){toast('Deck tidak memiliki kartu.');return;}
- const cards=onlyDue?deck.cards.filter(c=>replayReviews(state.reviews,c.id).due):deck.cards;
+ const procedure=isProcedureDeck(deck.cards);
+ // A due-only subset breaks the checklist order; procedural decks ALWAYS replay the full station.
+ const cards=procedure?orderedProcedureCards(deck.cards):(onlyDue?deck.cards.filter(c=>replayReviews(state.reviews,c.id).due):deck.cards);
  if(!cards.length){toast('Belum ada kartu yang jatuh tempo.');return;}
- const session={deck,cards,index:0,flipped:false,clock:null,cluesSeen:[],lastClue:0,processing:false,started:false};state.session=session;state.prevReview=null;state.route='player';document.body.classList.add('in-player');history.replaceState(null,'','#review');initCard();render();}
-function initCard(){const s=state.session;if(!s)return;s.flipped=false;s.cluesSeen=[];s.lastClue=0;s.started=false;s.clock=new CardClock(state.settings.timer?s.cards[s.index]?.timerSeconds||20:20);s.clock.resume(clockMs());}
+ const session={deck,cards,procedure,procedureView:'technique',index:0,flipped:false,clock:null,cluesSeen:[],lastClue:0,processing:false,started:false};state.session=session;state.prevReview=null;state.route='player';document.body.classList.add('in-player');history.replaceState(null,'','#review');initCard();render();}
+function playerTimerEnabled(s=state.session){return !!s&&!s.procedure&&state.settings.timer;}
+function initCard(){const s=state.session;if(!s)return;s.flipped=false;s.cluesSeen=[];s.lastClue=0;s.started=false;s.clock=new CardClock(playerTimerEnabled(s)?s.cards[s.index]?.timerSeconds||20:20);if(playerTimerEnabled(s))s.clock.resume(clockMs());}
 function stopSession(){if(state.session?.clock)state.session.clock.pause(clockMs());state.session=null;cancelAnimationFrame(rafId)}
 function playerCard(){const s=state.session;return s?.cards[s.index]}
 function renderPlayer(){const s=state.session;if(!s)return navigate('review');const card=playerCard();
  if(!card){main.innerHTML=`<div class="screen narrow" style="text-align:center;padding-top:80px"><div class="hero-mascot">(≧▽≦)</div><h1 class="page-title">Sesi selesai!</h1><p class="page-intro">${s.cards.length} kartu sudah kamu lewati. Rating tersimpan tanpa mengarang skor benar/salah.</p><div class="hero-actions" style="justify-content:center"><button class="button primary" data-nav="review">Ke Review</button><button class="button secondary" data-nav="library">My decks</button></div></div>`;return;}
- const n=s.index+1,len=s.cards.length,revealed=s.flipped,enterClass=s.enterDirection>0?'enter-from-left':s.enterDirection<0?'enter-from-right':'',clues=s.cluesSeen.map(t=>card.clues?.find(c=>c.atSecond===t)).filter(Boolean);
- main.innerHTML=`<div class="screen narrow"><div class="session-head"><div><button class="button ghost" data-nav="review">← Kembali</button></div><div style="text-align:center"><h2 class="session-title">${safe(s.deck.title)}</h2><p class="session-sub">FLASHCARDS · ${n} / ${len}</p></div><div><button class="button ghost" id="playerUndo" ${state.prevReview?'':'disabled'}>↶ Undo</button></div></div><div class="progress-rail"><div class="progress-bar" style="width:${(s.index/len)*100}%"></div></div><div class="timer-line"><span>✦ ${revealed?'Jawaban terbuka': 'Ingat dulu, baru balik'}</span><span id="timerPill" class="timer-pill">${state.settings.timer?'20s':'Santai'}</span></div><div class="flash-stage" id="flashStage" aria-label="Kartu flashcard; geser kiri atau kanan dari area mana saja"><div class="flash-behind"></div><div class="swipe-sticker left" id="stickerLeft">BELUM TAHU</div><div class="swipe-sticker right" id="stickerRight">TAHU</div><div class="flash-motion ${enterClass}" id="flashMotion"><div class="flash-scene ${revealed?'flipped':''}" id="flashScene"><div class="flash-face front"><div class="face-top"><span>PERTANYAAN</span><span>NOODL ◈</span></div><div class="face-content">${blocksHtml(card.front)}</div><div class="face-footer">Ketuk untuk balik · geser dari area mana saja</div></div><div class="flash-face back"><div class="face-top"><span>JAWABAN</span><span>FLASHCARD ✦</span></div><div class="face-content answer">${blocksHtml(card.back)}</div><div class="face-footer">Nilai sesuai ingatanmu, bukan tebakanmu</div></div></div></div></div><div class="clue-card" id="clueBox"><span class="info-icon">✦</span><div id="clueText">${revealed?'Jawaban dibuka. Timer dijeda.':'Clue pertama muncul pada detik ke-5.'}</div><button class="reveal-clues" id="showClues" ${clues.length?'':'disabled'}>Clue (${clues.length})</button></div><div id="ratingControls">${revealed?renderRatings():renderSwipeGuide()}</div><div class="player-controls"><button class="button secondary" id="playerFlip">${revealed?'↶ Lihat depan':'↻ Balik kartu'}</button><button class="button ghost" id="playerSkip">Lewati →</button></div><p class="session-meta">Swipe kiri / kanan termasuk di tengah kartu · Space: balik · 1–4: rating setelah flip · Z: undo. ${state.backend==='local'?'Data tersimpan di browser.':'Penyimpanan lokal dahulu, sinkronisasi kemudian.'}</p></div>`;
+ const n=s.index+1,len=s.cards.length,revealed=s.flipped,procedure=!!s.procedure,sequence=procedure&&s.procedureView==='sequence',timerOn=playerTimerEnabled(s),step=card.procedureStep,enterClass=s.enterDirection>0?'enter-from-left':s.enterDirection<0?'enter-from-right':'',clues=s.cluesSeen.map(t=>card.clues?.find(c=>c.atSecond===t)).filter(Boolean);
+ main.innerHTML=`<div class="screen narrow"><div class="session-head"><div><button class="button ghost" data-nav="review">← Kembali</button></div><div style="text-align:center"><h2 class="session-title">${safe(s.deck.title)}</h2><p class="session-sub">${procedure?'TILIK OSCE · URUT':'FLASHCARDS'} · ${n} / ${len}</p></div><div><button class="button ghost" id="playerUndo" ${state.prevReview?'':'disabled'}>↶ Undo</button></div></div>${procedure?`<div class="procedure-modes" aria-label="Cara latihan tilik"><button class="button ${s.procedureView==='technique'?'primary':'secondary'}" data-procedure-view="technique" aria-pressed="${s.procedureView==='technique'}">Pelajari teknik</button><button class="button ${s.procedureView==='sequence'?'primary':'secondary'}" data-procedure-view="sequence" aria-pressed="${s.procedureView==='sequence'}">Ingat urutan</button></div>`:''}<div class="progress-rail"><div class="progress-bar" style="width:${(s.index/len)*100}%"></div></div><div class="timer-line"><span>✦ ${revealed?'Jawaban terbuka':procedure?'Peragakan dahulu, baru balik':'Ingat dulu, baru balik'}</span><span id="timerPill" class="timer-pill">${timerOn?'20s':procedure?'Tanpa timer':'Santai'}</span></div><div class="flash-stage" id="flashStage" aria-label="Kartu flashcard; geser kiri atau kanan dari area mana saja"><div class="flash-behind"></div><div class="swipe-sticker left" id="stickerLeft">BELUM TAHU</div><div class="swipe-sticker right" id="stickerRight">TAHU</div><div class="flash-motion ${enterClass}" id="flashMotion"><div class="flash-scene ${revealed?'flipped':''}" id="flashScene"><div class="flash-face front" aria-hidden="${revealed}"><div class="face-top"><span>${procedure?'LANGKAH '+n:'PERTANYAAN'}</span><span>NOODL ◈</span></div><div class="face-content" tabindex="${revealed?-1:0}" role="region" aria-label="Pertanyaan kartu, gulir untuk membaca seluruh teks">${sequence?'<div class="sequence-recall">Apa tindakan selanjutnya?<small>Ucapkan dan peragakan tanpa melihat daftar tilik</small></div>':blocksHtml(card.front)}</div><div class="face-footer">${(card.front||[]).filter(b=>b.type==='text').reduce((n,b)=>n+b.text.length,0)>350?'↕ Gulir pertanyaan · ☷ Baca lengkap':procedure?'Peragakan tindakan · geser dari area mana saja':'Ketuk untuk balik · geser dari area mana saja'}</div></div><div class="flash-face back" aria-hidden="${!revealed}"><div class="face-top"><span>${procedure?'TINDAKAN '+n:'JAWABAN'}</span><span>FLASHCARD ✦</span></div><div class="face-content answer" tabindex="${revealed?0:-1}" role="region" aria-label="Jawaban kartu, gulir untuk membaca seluruh teks">${procedure?`<div class="procedure-rubric">${step.critical?'<strong class="critical-note">⚠ Langkah kritis menurut tilik sumber</strong>':''}<strong>${safe(step.checklistItem)}</strong>${step.phase?`<small>${safe(step.phase)}</small>`:''}</div>`:''}${blocksHtml(card.back)}${hasExplanation(card)?`<p class="answer-more-label">✦ Pembahasan lengkap tersedia lewat tombol Baca lengkap di bawah kartu</p>`:''}${procedure?`<div class="procedure-source">Sumber: ${safe(step.sourceDocument)}${step.sourcePage?' · halaman '+step.sourcePage:''} · butir ${safe(step.checklistItem)}</div>`:''}</div><div class="face-footer">${(card.back||[]).filter(b=>b.type==='text').reduce((n,b)=>n+b.text.length,0)>350?'↕ Gulir jawaban · ☷ Baca lengkap':procedure?'Rating hanya penilaian diri, bukan bukti kompetensi klinis':'Nilai sesuai ingatanmu, bukan tebakanmu'}</div></div></div></div></div>${!procedure?`<div class="clue-card" id="clueBox"><span class="info-icon">✦</span><div id="clueText">${revealed?'Jawaban dibuka. Timer dijeda.':'Clue pertama muncul pada detik ke-5.'}</div><button class="reveal-clues" id="showClues" ${clues.length?'':'disabled'}>Clue (${clues.length})</button></div>`:''}<div id="ratingControls">${revealed?renderRatings():renderSwipeGuide()}</div><div class="player-controls"><button class="button secondary" id="playerFlip">${revealed?'↶ Lihat depan':'↻ Balik kartu'}</button><button class="button secondary" id="playerRead" title="Buka seluruh teks tanpa risiko terpotong">☷ Baca lengkap${hasExplanation(card)?" + pembahasan":""}</button><button class="button ghost" id="playerSkip">Lewati →</button></div><p class="session-meta">${procedure?'Urutan tindakan mengikuti sumber · tanpa timer dan clue · rating bukan sertifikasi teknik. ':''}Swipe kiri / kanan termasuk di tengah kartu · Space: balik · 1–4: rating setelah flip · Z: undo. ${state.backend==='local'?'Data tersimpan di browser.':'Penyimpanan lokal dahulu, sinkronisasi kemudian.'}</p></div>`;
  s.enterDirection=0;bindGestures();bindPlayerButtons();tick();
 }
 function renderRatings(){return `<div class="rating-grid">${[['Lupa','0','forget','↶'],['Sulit','1','','◌'],['Bagus','2','','✓'],['Mudah','3','easy','✦']].map(([text,rating,cls,icon])=>`<button class="rating ${cls}" data-rating="${rating}"><span>${icon}</span>${text}<small>${Number(rating)+1} / ${rating==='0'?'←':rating==='3'?'→':'tap'}</small></button>`).join('')}</div>`}
 function renderSwipeGuide(){return `<div class="swipe-guide"><span class="left">← Belum tahu</span><span>Swipe tanpa harus membalik</span><span class="right">Sudah tahu →</span></div>`}
 function updateClueDisplay(){const s=state.session;if(!s||s.flipped)return;const card=playerCard();if(!card)return;const latest=s.cluesSeen.at(-1),c=card.clues?.find(x=>x.atSecond===latest),txt=$('#clueText');if(txt)txt.textContent=c?`Petunjuk ${s.cluesSeen.length}: ${c.text}`:'Clue pertama muncul pada detik ke-5.';const btn=$('#showClues');if(btn){btn.disabled=!s.cluesSeen.length;btn.textContent=`Clue (${s.cluesSeen.length})`;}}
 function tick(){cancelAnimationFrame(rafId);const s=state.session;if(!s||state.route!=='player'||!playerCard())return;
- const now=clockMs(),elapsed=state.settings.timer?s.clock.seconds(now):0;
- if(state.settings.timer){const remain=Math.max(0,Math.ceil((s.clock.durationMs-s.clock.elapsed(now))/1000));const pill=$('#timerPill');if(pill){pill.textContent=remain+'s';pill.classList.toggle('expired',remain===0);}}
- if(state.settings.timer&&state.settings.clues&&!s.flipped){const newly=dueClues(elapsed).filter(x=>!s.cluesSeen.includes(x));
+ const now=clockMs(),timerOn=playerTimerEnabled(s),elapsed=timerOn?s.clock.seconds(now):0;
+ if(timerOn){const remain=Math.max(0,Math.ceil((s.clock.durationMs-s.clock.elapsed(now))/1000));const pill=$('#timerPill');if(pill){pill.textContent=remain+'s';pill.classList.toggle('expired',remain===0);}}
+ if(timerOn&&state.settings.clues&&!s.flipped){const newly=dueClues(elapsed).filter(x=>!s.cluesSeen.includes(x));
   if(newly.length){s.cluesSeen.push(...newly);const latest=playerCard().clues?.find(c=>c.atSecond===newly.at(-1));if(latest){toast(`✦ Clue ${s.cluesSeen.length}: ${latest.text}`);playTone(690,.055);}updateClueDisplay();}
  }
- if(state.settings.timer&&s.clock.expired(now)&&!s.started){s.started=true;toast('20 detik habis. Kamu boleh membuka jawaban atau swipe.');}
+ if(timerOn&&s.clock.expired(now)&&!s.started){s.started=true;toast('20 detik habis. Kamu boleh membuka jawaban atau swipe.');}
  rafId=requestAnimationFrame(tick);
 }
-function flip(){const s=state.session;if(!s||s.processing)return;s.flipped=!s.flipped;
- if(s.flipped){s.clock.pause(clockMs());}else if(document.visibilityState==='visible'){s.clock.resume(clockMs());}
- $('#flashScene')?.classList.toggle('flipped',s.flipped);$('#ratingControls').innerHTML=s.flipped?renderRatings():renderSwipeGuide();$('#playerFlip').textContent=s.flipped?'↶ Lihat depan':'↻ Balik kartu';$('.timer-line span:first-child').textContent=s.flipped?'✦ Jawaban terbuka':'✦ Ingat dulu, baru balik';if(s.flipped){$('#clueText').textContent='Jawaban dibuka. Timer dijeda.';}else updateClueDisplay();}
+function flip(){const s=state.session;if(!s||s.processing||state.modal)return;s.flipped=!s.flipped;
+ if(s.flipped){s.clock.pause(clockMs());}else if(playerTimerEnabled(s)&&document.visibilityState==='visible'){s.clock.resume(clockMs());}
+ $$('.face-content').forEach(el=>{el.scrollTop=0;el.tabIndex=el.closest('.flash-face.back')?(s.flipped?0:-1):(s.flipped?-1:0);});
+ $('#flashScene')?.classList.toggle('flipped',s.flipped);$('.flash-face.front')?.setAttribute('aria-hidden',String(s.flipped));$('.flash-face.back')?.setAttribute('aria-hidden',String(!s.flipped));$('#ratingControls').innerHTML=s.flipped?renderRatings():renderSwipeGuide();$('#playerFlip').textContent=s.flipped?'↶ Lihat depan':'↻ Balik kartu';$('.timer-line span:first-child').textContent=s.flipped?'✦ Jawaban terbuka':s.procedure?'✦ Peragakan dahulu, baru balik':'✦ Ingat dulu, baru balik';if(s.flipped){if($('#clueText'))$('#clueText').textContent='Jawaban dibuka. Timer dijeda.';}else updateClueDisplay();}
 function bindPlayerButtons(){
  $('#playerFlip')?.addEventListener('click',flip);
+ $('#playerRead')?.addEventListener('click',()=>openCardReader(state.session?.flipped?'back':'front'));
  $('#playerSkip')?.addEventListener('click',()=>advanceNoRating());
  $('#playerUndo')?.addEventListener('click',()=>void undo());
  $('#showClues')?.addEventListener('click',()=>{
@@ -196,14 +254,15 @@ function bindGestures(){
  };
  const finishCapture=id=>{try{if(stage.hasPointerCapture(id))stage.releasePointerCapture(id);}catch{}};
  stage.addEventListener('pointerdown',e=>{
-  if(pointer||state.session?.processing||!e.isPrimary||(e.pointerType==='mouse'&&e.button!==0))return;
+  if(pointer||state.modal||state.session?.processing||!e.isPrimary||(e.pointerType==='mouse'&&e.button!==0))return;
   // Real controls remain clickable. Images are deliberately NOT excluded: users
   // can swipe over their center, or simply tap to open the full-size preview.
   if(e.target instanceof Element&&e.target.closest('button,a,iframe,input,textarea,select,[contenteditable="true"]'))return;
   pointer={id:e.pointerId,x:e.clientX,y:e.clientY,at:performance.now(),dx:0,dy:0,axis:'pending',
    zoomTarget:e.target instanceof Element&&!!e.target.closest('[data-zoom]'),samples:[{x:e.clientX,t:performance.now()}]};
   // Preserve native click on images; capture only if that touch becomes a drag.
-  if(!pointer.zoomTarget)try{stage.setPointerCapture(e.pointerId);}catch{}
+  // Capture only after a horizontal movement: native vertical scroll must remain reachable at the top of long cards.
+  if(!pointer.zoomTarget&&!e.target.closest('.face-content'))try{stage.setPointerCapture(e.pointerId);}catch{}
  });
  stage.addEventListener('pointermove',e=>{
   if(!pointer||pointer.id!==e.pointerId)return;
@@ -278,7 +337,7 @@ function advanceNoRating(){const s=state.session;if(!s||s.processing)return;s.in
 async function rate(rating,options={}){const s=state.session;if(!s||s.processing||!playerCard())return;
  if(!s.flipped&&!([0,3].includes(rating)))return;
  s.processing=true;s.clock.pause(clockMs());const c=playerCard(),elapsedMs=Math.floor(s.clock.elapsed(clockMs()));
- const event={id:uuid(),operationId:null,deckId:s.deck.id,cardId:c.id,rating,answerRevealed:s.flipped,cluesSeen:[...s.cluesSeen],elapsedMs,timedOut:state.settings.timer&&s.clock.expired(clockMs()),reviewedAt:new Date().toISOString(),undoneAt:null};event.operationId=event.id;
+ const event={id:uuid(),operationId:null,deckId:s.deck.id,cardId:c.id,rating,answerRevealed:s.flipped,cluesSeen:[...s.cluesSeen],elapsedMs:playerTimerEnabled(s)?elapsedMs:0,timedOut:playerTimerEnabled(s)&&s.clock.expired(clockMs()),reviewedAt:new Date().toISOString(),undoneAt:null};event.operationId=event.id;
  try{
   state.reviews.push(event);if(state.backend!=='local')state.queue.push({kind:'review',payload:event});
   await Promise.all([persist(),options.swipeDirection?animateSwipeExit(options.swipeDirection):Promise.resolve()]);state.prevReview={event,index:s.index};
@@ -301,12 +360,12 @@ async function flushQueue(){if(flushing||state.backend==='local'||!navigator.onL
  finally{flushing=false;}
 }
 async function refresh(){if(state.backend==='local'){toast('Mode lokal: tidak ada koneksi MCP.');return;}
- try{await flushQueue();const cloud=await fetchCloud();state.decks=cloud.data.decks||[];state.media=cloud.data.media||[];state.visualBindings=cloud.data.visualBindings||[];
+ try{await flushQueue();const cloud=await fetchCloud();state.decks=cloud.data.decks||[];state.folders=cloud.data.folders||[];state.media=cloud.data.media||[];state.visualBindings=cloud.data.visualBindings||[];
  const pending=state.queue.filter(q=>q.kind==='review').map(q=>q.payload);
  state.reviews=[...(cloud.data.reviews||[]),...pending];await persist();render();toast('Data diperbarui.');}
  catch(e){toast('Tidak bisa mengambil data cloud: '+e.message);}
 }
-async function createWithChatGPT(){const message='Buatkan satu deck flashcard Noodl. Tanyakan dulu topik dan sumber yang ingin kupakai. Buat front, back, tepat tiga clue progresif pada 5/10/15 detik, timer default 20 detik. Simpan lewat MCP create_deck. Jika ada gambar dari dokumen atau internet, PERIKSA gambarnya secara visual, rekam sumber dan lisensi, impor sebagai pending, lalu minta aku memeriksa preview dan menyetujuinya. Jangan menempelkan gambar ke kartu sebelum asset berstatus approved.';
+async function createWithChatGPT(){const folder=state.folders.find(f=>f.id===state.activeFolderId);const destination=folder&&state.backend!=='local'?` Simpan langsung ke folder ${folder.name} menggunakan folderId=${folder.id} pada tool create_deck.`:'';const message='Buatkan satu deck flashcard Noodl. Tanyakan dulu topik dan sumber yang ingin kupakai. Untuk teori buat front, back, dan tepat tiga clue pada 5/10/15 detik. Kalau sumbernya daftar tilik OSCE, jangan acak langkah: buat procedureStep berurutan 1..N dari butir tilik asli dengan checklistItem, phase, critical, sourceDocument, sourcePage. Tidak perlu clue untuk tilik; mode urutan otomatis tanpa timer. Jangan mengarang butir atau menilai kompetensi hanya dari swipe. Simpan lewat MCP create_deck. Jika ada gambar dari dokumen atau internet, PERIKSA gambarnya secara visual, rekam sumber dan lisensi, impor sebagai pending, lalu minta aku memeriksa preview dan menyetujuinya. Jangan menempelkan gambar ke kartu sebelum asset berstatus approved.'+destination;
  if(looksEmbedded()&&window.openai?.sendFollowUpMessage){try{await window.openai.sendFollowUpMessage({prompt:message});return;}catch(e){toast('Permintaan ke ChatGPT gagal.');return;}}
  const win=window.open('https://chatgpt.com/','_blank','noopener,noreferrer');try{await navigator.clipboard.writeText(message);toast('Instruksi disalin. Tempel di ChatGPT yang terhubung ke Noodl.');}catch{if(win)win.close();toast('Izinkan clipboard atau buka ChatGPT secara manual.');}
 }
@@ -393,7 +452,7 @@ async function previewMedia(id){const media=state.media.find(m=>m.id===id);if(!m
  $('#rejectMedia')?.addEventListener('click',()=>void rejectMedia(id));
  $('#approveForm')?.addEventListener('submit',event=>{event.preventDefault();if(!state.modal?.rendered)return toast('Gambar belum dirender dan tidak bisa disetujui.');const form=new FormData(event.target);const attestation={imageRendered:true,sourceMatches:form.get('sourceMatches')==='on',labelsLegible:form.get('labelsLegible')==='on',contentRelevant:form.get('contentRelevant')==='on',note:String(form.get('note')||''),challenge:state.modal?.challenge||''};void approveMedia(id,attestation)});
 }
-function closeModal(){state.modal=null;modalRoot.innerHTML='';if(state.session&&!state.session.flipped&&document.visibilityState==='visible')state.session.clock.resume(clockMs());}
+function closeModal(){const wasReader=state.modal?.kind==='card-reader';state.modal=null;document.body.classList.remove('reading-open');modalRoot.innerHTML='';if(wasReader)$('#playerRead')?.focus({preventScroll:true});if(state.session&&!state.session.flipped&&document.visibilityState==='visible')state.session.clock.resume(clockMs());}
 async function approveMedia(id,attestation){if(!Object.values(attestation).slice(0,4).every(Boolean)||attestation.note.trim().length<12)return toast('Semua bukti pemeriksaan perlu diisi.');
  const m=state.media.find(m=>m.id===id);if(!m)return;
  try{
@@ -438,7 +497,7 @@ async function visualCall(name,endpoint,body){
 async function refreshVisual(){
  if(state.backend==='local')return;
  const data=state.backend==='embedded'?await hostCall('app_snapshot'):await (await fetch('/api/snapshot',{credentials:'same-origin',cache:'no-store'})).json();
- state.decks=data.decks||state.decks;state.media=data.media||state.media;state.visualBindings=data.visualBindings||[];
+ state.decks=data.decks||state.decks;state.folders=data.folders||state.folders;state.media=data.media||state.media;state.visualBindings=data.visualBindings||[];
  await persist();render();
 }
 async function previewCardBinding(id){
@@ -471,13 +530,106 @@ async function attachApprovedBinding(id){
  }catch(e){toast('Belum terpasang: '+e.message+' · Perbarui deck lalu ulangi pemasangan.');}
 }
 
-function exportLocal(){const bytes=new Blob([JSON.stringify({format:'noodl-flashcards-backup-v1',exportedAt:new Date().toISOString(),decks:state.decks,reviews:state.reviews,media:state.media},null,2)],{type:'application/json'});const url=URL.createObjectURL(bytes);const a=document.createElement('a');a.href=url;a.download='noodl-flashcards-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+const folderNamesEqual=(a,b)=>a.trim().replace(/\s+/g,' ').toLowerCase()===b.trim().replace(/\s+/g,' ').toLowerCase();
+function validFolderName(v){const name=String(v||'').trim().replace(/\s+/g,' ');if(!name||name.length>72||/[/\\\u0000-\u001f\u007f]/.test(name)||name==='.'||name==='..')throw Error('Nama folder tidak valid (1–72 karakter, tanpa slash).');return name;}
+function localFolderOp(action,args){
+ const existing=state.folders,folder=existing.find(f=>f.id===args.folderId);
+ const destination=(args.parentId||args.folderId===null)?args.parentId:null;
+ const sameName=(parentId,name,except=null)=>existing.some(f=>f.id!==except&&f.parentId===parentId&&folderNamesEqual(f.name,name));
+ if(action==='create_folder'){
+  const parentId=args.parentId||null,name=validFolderName(args.name);
+  if(parentId&&!existing.some(f=>f.id===parentId))throw Error('Folder induk tidak ada');
+  if(folderPath(parentId).length>=6)throw Error('Maksimal 6 tingkat folder');
+  if(sameName(parentId,name))throw Error('Folder dengan nama yang sama sudah ada di lokasi ini');
+  const next={id:uuid(),name,parentId,revision:1,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};existing.push(next);return {folderId:next.id};
+ }
+ if(action==='move_deck_to_folder'){
+  const deck=state.decks.find(d=>d.id===args.deckId);if(!deck)throw Error('Deck tidak ditemukan');
+  const folderId=args.folderId||null;if(folderId&&!existing.some(f=>f.id===folderId))throw Error('Folder tujuan tidak ditemukan');
+  if((deck.folderId||null)!==folderId){deck.folderId=folderId;deck.revision++;}return {deckId:deck.id,folderId};
+ }
+ if(!folder)throw Error('Folder tidak ditemukan');
+ if(action==='rename_folder'){
+  const name=validFolderName(args.name);if(sameName(folder.parentId,name,folder.id))throw Error('Nama folder sudah ada di lokasi ini');
+  folder.name=name;folder.revision++;return {folderId:folder.id};
+ }
+ if(action==='move_folder'){
+  const parentId=args.parentId||null;
+  if(parentId&&!existing.some(f=>f.id===parentId))throw Error('Folder induk tidak ditemukan');
+  if(parentId===folder.id||folderPath(parentId).some(p=>p.id===folder.id))throw Error('Folder tidak boleh dipindah ke dalam dirinya sendiri');
+  const depth=(id)=>{const children=existing.filter(f=>f.parentId===id);return children.length?1+Math.max(...children.map(x=>depth(x.id))):1;};
+  if(folderPath(parentId).length+depth(folder.id)>6)throw Error('Maksimal 6 tingkat folder');
+  if(sameName(parentId,folder.name,folder.id))throw Error('Nama folder bentrok di lokasi tujuan');
+  if(folder.parentId!==parentId){folder.parentId=parentId;folder.revision++;}return {folderId:folder.id,parentId};
+ }
+ if(action==='delete_folder'){
+  for(const child of existing.filter(f=>f.parentId===folder.id)){
+   if(sameName(folder.parentId,child.name,child.id))throw Error('Nama subfolder bentrok di folder induk. Pindahkan atau ubah nama lebih dulu.');
+  }
+  for(const child of existing)if(child.parentId===folder.id){child.parentId=folder.parentId;child.revision++;}
+  for(const deck of state.decks)if(deck.folderId===folder.id){deck.folderId=folder.parentId;deck.revision++;}
+  state.folders=existing.filter(f=>f.id!==folder.id);
+  if(state.activeFolderId===folder.id)state.activeFolderId=folder.parentId;
+  return {folderId:folder.id,deleted:true};
+ }
+ throw Error('Operasi folder tidak dikenal');
+}
+async function folderCall(action,payload){
+ if(state.backend==='local'){const result=localFolderOp(action,payload);await persist();render();return result;}
+ const result=state.backend==='embedded'?await hostCall(action,payload):await (async()=>{
+  const endpoints={create_folder:'/api/folders',rename_folder:'/api/folders/rename',move_folder:'/api/folders/move',delete_folder:'/api/folders/delete',move_deck_to_folder:'/api/folders/move-deck'};
+  const resp=await fetch(endpoints[action],{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(payload)});
+  const data=await resp.json();if(!resp.ok)throw Error(data.error||'Folder operation failed');return data;
+ })();
+ await refreshFoldersQuiet();return result;
+}
+async function refreshFoldersQuiet(){
+ if(state.backend==='local')return;
+ const {data}=await fetchCloud();state.decks=data.decks||[];state.folders=data.folders||[];state.media=data.media||[];state.visualBindings=data.visualBindings||[];
+ if(state.activeFolderId&&!state.folders.some(f=>f.id===state.activeFolderId))state.activeFolderId=null;
+ await persist();render();
+}
+function folderForm(action,id){
+ const folder=state.folders.find(f=>f.id===id),deck=state.decks.find(d=>d.id===id),isCreate=action==='create',isRename=action==='rename',isDelete=action==='delete',isMoveFolder=action==='move',isMoveDeck=action==='move-deck';
+ if(!isCreate&&!deck&&!folder)return toast('Folder / deck tidak ditemukan');
+ const heading={create:'Buat folder baru',rename:'Ganti nama folder',delete:'Hapus folder (isi tetap aman)',move:'Pindahkan folder','move-deck':'Pindahkan deck'}[action];
+ const initialParent=isCreate?state.activeFolderId:isMoveDeck?deck.folderId:folder?.parentId;
+ let body='';
+ if(isCreate||isRename){body=`<label class="folder-label" for="folderName">Nama folder</label><input class="search folder-input" id="folderName" name="name" maxlength="72" required value="${safe(isRename?folder.name:'')}" placeholder="Contoh: Blok 9"/><label class="folder-label" for="parentFolder">${isCreate?'Lokasi folder':'Folder induk saat ini'}</label><select class="search folder-input" id="parentFolder" name="parentId" ${isRename?'disabled':''}>${folderOptions(isRename?folder.parentId:initialParent)}</select>`;}
+ else if(isMoveDeck||isMoveFolder){body=`<p>Memindahkan <b>${safe(deck?.title||folder?.name)}</b> tidak mengubah isi kartu maupun progres review.</p><label class="folder-label" for="parentFolder">Lokasi tujuan</label><select class="search folder-input" id="parentFolder" name="parentId">${folderOptions(initialParent,isMoveFolder?folder.id:null)}</select>`;}
+ else if(isDelete){const sub=state.folders.filter(f=>f.parentId===folder.id).length,decks=state.decks.filter(d=>d.folderId===folder.id).length;body=`<div class="notice">Folder <b>${safe(folder.name)}</b> akan dihapus. <b>${decks} deck</b> dan <b>${sub} subfolder</b> dipindahkan satu tingkat ke atas. Tidak ada kartu, gambar, atau riwayat review yang dihapus. Jika nama subfolder bentrok, operasi dibatalkan.</div>`;}
+ state.modal={type:'folder-operation',action,id};
+ modalRoot.innerHTML=`<div class="preview-modal" role="dialog" aria-modal="true" aria-label="${safe(heading)}"><div class="modal-panel folder-dialog"><h2>${safe(heading)}</h2><form id="folderEditForm">${body}<div class="modal-footer"><button class="button ghost" type="button" id="cancelFolderEdit">Batal</button><button class="button ${isDelete?'danger':'primary'}" type="submit">${isDelete?'Hapus folder saja':'Simpan perubahan'}</button></div></form></div></div>`;
+ $('#cancelFolderEdit').addEventListener('click',closeModal);
+ $('#folderEditForm').addEventListener('submit',async event=>{
+  event.preventDefault();const btn=event.target.querySelector('[type="submit"]');btn.disabled=true;
+  try{
+   const fd=new FormData(event.target),parentId=(fd.get('parentId')||null),operationId=uuid();let name=null,payload;
+   const revision=folder?.revision??deck?.revision;
+   if(isCreate){name=validFolderName(fd.get('name'));payload={operationId,name,parentId};}
+   else if(isRename){name=validFolderName(fd.get('name'));payload={operationId,folderId:folder.id,expectedRevision:revision,name};}
+   else if(isMoveFolder)payload={operationId,folderId:folder.id,expectedRevision:revision,parentId};
+   else if(isMoveDeck)payload={operationId,deckId:deck.id,expectedRevision:revision,folderId:parentId};
+   else payload={operationId,folderId:folder.id,expectedRevision:revision};
+   await folderCall(({create:'create_folder',rename:'rename_folder',move:'move_folder',delete:'delete_folder','move-deck':'move_deck_to_folder'})[action],payload);
+   if(isCreate){state.activeFolderId=payload.parentId;state.search='';}
+   if(isDelete&&state.activeFolderId===folder.id)state.activeFolderId=folder.parentId;
+   closeModal();render();toast(isDelete?'Folder dihapus; deck dan subfolder tetap aman.':'Perubahan folder disimpan.');
+  }catch(e){btn.disabled=false;toast(e.message||'Gagal menyimpan folder');}
+ });
+ $('#folderName')?.focus();
+}
+function exportLocal(){const bytes=new Blob([JSON.stringify({format:'noodl-flashcards-backup-v1',exportedAt:new Date().toISOString(),decks:state.decks,folders:state.folders,reviews:state.reviews,media:state.media},null,2)],{type:'application/json'});const url=URL.createObjectURL(bytes);const a=document.createElement('a');a.href=url;a.download='noodl-flashcards-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 function playTone(freq=600,duration=.09){if(!state.settings.sound)return;try{const ctx=new (window.AudioContext||window.webkitAudioContext)();const osc=ctx.createOscillator(),gain=ctx.createGain();osc.type='sine';osc.frequency.value=freq;gain.gain.setValueAtTime(.045,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+duration);osc.connect(gain);gain.connect(ctx.destination);osc.start();osc.stop(ctx.currentTime+duration);osc.onended=()=>ctx.close();}catch{}}
 function vibrate(pattern=8){if(state.settings.haptics)navigator.vibrate?.(pattern)}
 // All UI events use delegation; generated content is escaped and never inserted as executable HTML.
 document.addEventListener('click',e=>{
  const nav=e.target.closest('[data-nav]');if(nav){navigate(nav.dataset.nav);return;}
+ const folderOpen=e.target.closest('[data-open-folder]');if(folderOpen){state.activeFolderId=folderOpen.dataset.openFolder||null;state.search='';if(state.route!=='library')navigate('library');else render();return;}
+ const folderAction=e.target.closest('[data-folder-action]');if(folderAction){folderForm(folderAction.dataset.folderAction,folderAction.dataset.folderId);return;}
+ const moveDeckButton=e.target.closest('[data-move-deck]');if(moveDeckButton){folderForm('move-deck',moveDeckButton.dataset.moveDeck);return;}
  const deck=e.target.closest('[data-open-deck],[data-start-deck]');if(deck){startDeck(deck.dataset.openDeck||deck.dataset.startDeck);return;}
+ const procedureMode=e.target.closest('[data-procedure-view]');if(procedureMode&&state.session?.procedure){const mode=procedureMode.dataset.procedureView;if(!['technique','sequence'].includes(mode)||state.session.processing)return;state.session.procedureView=mode;initCard();renderPlayer();return;}
  if(e.target.closest('[data-chat]')){void createWithChatGPT();return;}
  const loadEmbed=e.target.closest('[data-load-embed]');if(loadEmbed){
   const src=loadEmbed.dataset.loadEmbed;
@@ -496,13 +648,13 @@ document.addEventListener('click',e=>{
  if(e.target.closest('#refreshData')){void refresh();return;}
  if(e.target.closest('#exportLocal')){exportLocal();return;}
 });
-document.addEventListener('input',e=>{if(e.target.id==='deckSearch'){state.search=e.target.value;const area=$('.deck-grid');if(area)area.innerHTML=state.decks.filter(d=>(d.title+' '+d.description).toLowerCase().includes(state.search.toLowerCase())).map(deckTile).join('');}});
+document.addEventListener('input',e=>{if(e.target.id==='deckSearch'){state.search=e.target.value;const area=$('#libraryContents');if(area)area.innerHTML=renderLibraryContents();}});
 document.addEventListener('change',e=>{if(e.target.matches('[data-setting]')){state.settings[e.target.dataset.setting]=e.target.checked;applySettings();void persist();}});
 $('#headerChat').addEventListener('click',()=>void createWithChatGPT());
 $$('.dock .nav-btn').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.nav)));
 window.addEventListener('hashchange',()=>{if(state.initialized&&!state.session)navigate(location.hash.slice(1));});
 window.addEventListener('online',()=>{void flushQueue();});
-document.addEventListener('visibilitychange',()=>{const s=state.session;if(!s||!s.clock||s.flipped)return;if(document.hidden||state.modal)s.clock.pause(clockMs());else s.clock.resume(clockMs());});
+document.addEventListener('visibilitychange',()=>{const s=state.session;if(!s||!s.clock||s.flipped||!playerTimerEnabled(s))return;if(document.hidden||state.modal)s.clock.pause(clockMs());else s.clock.resume(clockMs());});
 window.addEventListener('keydown',e=>{
  if(state.modal){if(e.key==='Escape')closeModal();return;}
  if(state.route!=='player')return;

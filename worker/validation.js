@@ -1,11 +1,11 @@
-import {CLUE_SECONDS, MAX_CARDS,normalizeTimer} from '../shared/logic.js';
+import {CLUE_SECONDS, MAX_CARDS,normalizeTimer,assertProcedureSequence} from '../shared/logic.js';
 function assert(condition,message){if(!condition)throw new Error(message);}
 function txt(value,label,max=500){assert(typeof value==='string'&&value.trim().length>0&&value.length<=max,`Invalid ${label}`);return value.trim();}
 function optTxt(value,label,max=500){if(value===undefined||value===null)return '';assert(typeof value==='string'&&value.length<=max,`Invalid ${label}`);return value.trim();}
 export function validateBlock(block){
  assert(block&&typeof block==='object'&&!Array.isArray(block),'Invalid content block');
  switch(block.type){
-  case 'text':return {type:'text',text:txt(block.text,'text',1600)};
+  case 'text':return {type:'text',text:txt(block.text,'text',10000)};
   case 'math':return {type:'math',latex:txt(block.latex,'latex',500)};
   case 'image':return {type:'image',assetId:txt(block.assetId,'assetId',100),alt:txt(block.alt,'alt',280)};
   case 'embed':{
@@ -19,24 +19,53 @@ export function validateBlock(block){
   default: throw Error('Unsupported block type');
  }
 }
+export function validateProcedureStep(value){
+ assert(value&&typeof value==='object'&&!Array.isArray(value),'Invalid procedureStep');
+ assert(Number.isInteger(value.order)&&value.order>=1&&value.order<=1000,'Invalid procedure step order');
+ assert(typeof value.critical==='boolean','Procedure critical flag must be explicit');
+ const checklistItem=txt(value.checklistItem,'checklist item',180);
+ const phase=optTxt(value.phase,'procedure phase',70);
+ const sourceDocument=txt(value.sourceDocument,'procedure source document',220);
+ const sourcePage=value.sourcePage===undefined||value.sourcePage===null?null:value.sourcePage;
+ assert(sourcePage===null||(Number.isInteger(sourcePage)&&sourcePage>=1&&sourcePage<=10000),'Invalid source page');
+ return {order:value.order,checklistItem,phase,critical:value.critical,sourceDocument,sourcePage};
+}
 export function validateCard(input){
  assert(input&&typeof input==='object','Invalid card');
- const side=(arr,label)=>{assert(Array.isArray(arr)&&arr.length>0&&arr.length<=8,`Invalid ${label} blocks`);return arr.map(validateBlock);};
+ const side=(arr,label)=>{assert(Array.isArray(arr)&&arr.length>0&&arr.length<=24,`Invalid ${label} blocks`);return arr.map(validateBlock);};
  const front=side(input.front,'front'),back=side(input.back,'back');
+ const procedureStep=input.procedureStep===undefined?undefined:validateProcedureStep(input.procedureStep);
+ let explanation;
+ if(input.explanation!==undefined&&input.explanation!==null){
+  const raw=input.explanation;
+  assert(raw&&typeof raw==='object'&&!Array.isArray(raw),'Invalid explanation');
+  assert(Array.isArray(raw.sections)&&raw.sections.length>=1&&raw.sections.length<=16,'Explanation needs 1..16 sections');
+  explanation={sections:raw.sections.map((section,i)=>{
+   assert(section&&typeof section==='object','Invalid explanation section');
+   assert(Array.isArray(section.blocks)&&section.blocks.length>=1&&section.blocks.length<=20,'Explanation section needs 1..20 blocks');
+   const blocks=section.blocks.map(validateBlock);
+   assert(blocks.every(b=>b.type!=='image'),'Put verified images on the card back, not in explanation sections');
+   return {heading:txt(section.heading,`section ${i+1} heading`,180),blocks};
+  })};
+ }
+ const totalText=[...front,...back,...(explanation?.sections||[]).flatMap(x=>x.blocks)].reduce((n,b)=>n+(b.type==='text'?b.text.length:0),0);
+ assert(totalText<=80000,'Card text exceeds 80000 characters');
  const clues=Array.isArray(input.clues)?input.clues:[];
- assert(clues.length===3,'Exactly three clues are required');
+ assert(procedureStep?(clues.length===0||clues.length===3):clues.length===3,procedureStep?'Procedure clues must be empty or exactly three':'Exactly three clues are required');
  const byTime=[...clues].sort((a,b)=>a.atSecond-b.atSecond);
  assert(byTime.every((c,i)=>c.atSecond===CLUE_SECONDS[i]),'Clues must be at 5, 10, and 15 seconds');
  const clueTexts=byTime.map((c,i)=>({atSecond:CLUE_SECONDS[i],text:txt(c.text,'clue',180)}));
  const tags=Array.isArray(input.tags)?input.tags:[];
  assert(tags.length<=10,'Too many tags');
- return {front,back,clues:clueTexts,timerSeconds:normalizeTimer(input.timerSeconds),tags:tags.map(v=>txt(v,'tag',40))};
+ return {front,back,clues:clueTexts,timerSeconds:normalizeTimer(input.timerSeconds),tags:tags.map(v=>txt(v,'tag',40)),...(procedureStep?{procedureStep}:{}),...(explanation?{explanation}:{})};
 }
 export function validateDeckInput(input){
  assert(input&&typeof input==='object','Missing deck');
  const title=txt(input.title,'title',120),description=optTxt(input.description,'description',400);
  assert(Array.isArray(input.cards)&&input.cards.length>=1&&input.cards.length<=Math.min(MAX_CARDS,100),'New deck requires 1..100 cards');
- return {title,description,cards:input.cards.map(validateCard)};
+ const cards=input.cards.map(validateCard);
+ assertProcedureSequence(cards);
+ return {title,description,cards};
 }
 export function validateReview(value){
  assert(value&&typeof value==='object','Missing review');

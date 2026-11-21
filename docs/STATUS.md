@@ -36,11 +36,61 @@
 - PNG upload/preview/approve/attach flow: PASS Chromium DOM smoke with a **real decoded PNG** fixture.
 - Real PDF and PPTX composition-to-PNG helper: PASS on generated fixtures; rendered images manually inspected.
 - Full live browser navigation test: Not possible in authoring environment because Chromium navigation to localhost was blocked by administrator. The DOM smoke uses `set_content` to test JS/CSS instead.
-- This baseline test matrix predates the first hosted release. Live MCP tool discovery and D1 deck listing were verified on v0.1.
+- Live MCP host, D1/R2 and production publishing: NOT TESTED.
 
 ## Follow-up — Smooth entire-card swipe (v0.2.0)
 
 - Pointer gestures are handled on `#flashStage` (whole card), not the old inner motion child; horizontal capture keeps motion active outside the component, including text/image center. Child image capture transfer is distinguished from actual pointer cancellation.
 - Drag follows the finger via `requestAnimationFrame` + `translate3d`, supports reversal, and exits smoothly before the next card enters. Tap remains flip, image tap remains zoom, and scrolling long content vertically remains native.
 - Desktop and touch interactions verified in `scripts/smoke_gestures.py` via Chromium (touch uses CDP `Input.dispatchTouchEvent`); passed left/right center swipes, image swipe/zoom, short bounce, reverse drag, after-flip swipe, vertical scroll, and Undo. Existing `scripts/smoke_browser.py` also passed.
-- Touch testing used Chromium's emulated touchscreen, **not physical Android/iOS hardware**.
+- Source-only prototype: not yet live/deployed. Touch testing used Chromium's emulated touchscreen, **not physical Android/iOS hardware**.
+
+## v0.3 source implementation — card-bound visual validation
+
+- Implemented `migrations/0002_visual_validation.sql`, `worker/visualValidation.js`, new MCP/REST routes and card-specific human approval UI.
+- `create_deck` / `append_cards` reject direct image blocks; `update_card` rejects new images without an attached exact-card evidence binding. An answer edit revokes old bindings.
+- Source report A is recorded before final-image report B; both are model-authored observations, **not verified scientific facts**. The UI requires the account user to inspect the stored image before consenting.
+- Asset SHA-256 and exact semantic front/back answer hash are bound to each candidate. Invalidation happens when answer/media changes. A per-deck revision guard prevents stale attachment.
+- `npm run check`, `npm test`: PASS **28/28** tests. Browser desktop + mobile gesture smoke PASS; simulated MCP-host card-approval/attach UI smoke PASS (`scripts/smoke_visual_ui.py`). **No real host deployment tested**.
+- Six real PNG pages from the owner's original Serologi Tifoid PDF rendered; five matched to nine existing card IDs, slide 3 epidemiology map intentionally unassigned. Actual image bytes and manifest are in a **separate private zip**, not in source repo.
+- A direct attempt to invoke the currently connected **v0.2** `import_media_file` using a generated file ID failed with `A host-transferred file_id is required`. Therefore active media list remains empty and **no live card/media was changed**. The new version must be deployed and verified before attachment.
+- Server-side source-page identity is labeled `unverified_host_context` until actual source bytes/page proof are present. A model report cannot upgrade it to `confirmed`. This is a known limitation, not a fake green verification state.
+
+## v0.4 recovery (2026-11-21)
+
+- Added owner-scoped chunked MCP upload fallback for an image selected in the Noodl UI; does not depend on ChatGPT `file_id` or a host download URL.
+- Added private owner-checked R2 ranged readback fallback for images that fail to render through embedded `/api/media` URL. The browser reconstructs complete bytes and compares SHA-256 before showing a full preview.
+- Added migration `0003_chunked_media_upload.sql`, max 4 MB per image, 96 KiB chunks, ordered writes, expiration, max eight concurrent sessions/account and automatic cleanup of expired sessions when new ones begin.
+- No implicit fallback from embedded cloud to local-only media. Multi-file selection now supported.
+- 31/31 Node automated tests pass. Browser simulation successfully uploads and re-reads the original `slide-06.png` (1,256,681 bytes) and opens the full visual approval preview. **The simulated digest helper is used only because `about:blank` in headless test lacks secure-context Web Crypto; actual server tests use real Web Crypto.**
+- The live Noodl plugin was observed reporting **0.3.0** in a final check on 2026-11-21 (initially 0.2.0 earlier); the v0.4 source was not deployed; no live image has yet been imported, approved or attached, and the original 64-card deck was not modified.
+
+**Active deck identity correction:** The v0.3 connection currently lists `a951f84c-79bd-4071-a2eb-2d04d7605095` (64 cards, revision 6), not earlier v0.2 deck ID `408f1352-c28e-4516-9f17-2e69ea684778` (which now returns Deck not found). All six original slide images now have matching cards in the active deck, including epidemiology slide 3; the supplied separate manifest proposes 12 card bindings. This is not proof that the old deck was deleted; it may be in a separate account/database/connector version.
+
+## v0.5 folder update (local source release)
+
+- Implemented nested folders, breadcrumb navigation, folder search, UI dialogs for create/rename/move/delete, and deck moves into/out of folders.
+- Added six owner-scoped MCP folder tools, optional `folderId` for `create_deck`, folder metadata in deck read/snapshot, and `migrations/0004_folders.sql` preserving legacy records at root.
+- Folder deletion reparents direct child folders and deck records rather than deleting their cards/media/reviews. Cycles, duplicate sibling names, cross-owner destination folders and stale revisions are rejected.
+- **Verified locally:** 38/38 Node/SQLite tests, JS syntax check, and Chromium local UI interactions at 1366px and 390px for nested folder creation/deck relocation/safe deletion.
+- **Not yet verified:** deployment to trusted ChatGPT host, upgraded live plugin manifest/MCP registry, applying migration to the real account D1, live persistence with existing Serologi Tifoid deck. ZIP alone does not activate the feature on the currently connected plugin.
+
+
+## v0.6 — OSCE sequential flashcards (local code only)
+
+- Optional `procedureStep` metadata on existing cards, no extra service or D1 migration.
+- Consecutive source-ordered steps checked on create/append/update; deletion/reordering forbidden to prevent silent omissions.
+- Same player: Technique view + Sequence recall, no timer/clue for procedural decks, swipe + Undo retained.
+- Existing two-stage media verification and account-owner approval not bypassed.
+- Source docs and metadata are model-supplied until checked against actual selected tilik; no real OSCE tilik has been imported into production.
+- Production plugin must be upgraded separately and manually verified before claiming this is live.
+
+
+## v0.7 — Layered Reading + long-text scroll repair (local code only)
+
+- `.face-content` now anchors overflowing text to the top; both faces remain scrollable, including mobile viewport 320×568 and desktop.
+- Reader modal for entire front/back + optional explanation sections. Timer pauses, reader disables swipe while open and prevents unflipped-answer spoiler.
+- `validateCard` accepts larger explicitly-bounded text; rejects explanation image blocks as they would bypass card-side visual validation; semantic hash includes explanation.
+- v0.7 MCP version is `0.7.0`; existing deck/review IDs and D1 schema are unchanged.
+- Locally: 47/47 Node tests passed, `smoke_long_text.py` Chromium four viewports passed, existing gesture/OSCE/chunked-upload smoke passed.
+- Needs deployment and live plugin verification, not yet available on connected version.

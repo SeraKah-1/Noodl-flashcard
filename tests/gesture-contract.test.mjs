@@ -7,7 +7,7 @@ test('whole-card stage handles pointer capture and image zoom without hijacking 
  const css=readFileSync('public/styles.css','utf8');
  assert.match(app,/function bindGestures\(\)/);
  assert.match(app,/stage\.setPointerCapture\(e\.pointerId\)/);
- assert.match(app,/if\(!pointer\.zoomTarget\)/);
+ assert.match(app,/!pointer\.zoomTarget\&\&!e\.target\.closest\('\.face-content'\)/);
  assert.match(app,/e\.target===stage&&pointer\?\.id===e\.pointerId/);
  assert.match(app,/requestAnimationFrame\(paint\)/);
  assert.match(css,/touch-action:pan-y/);

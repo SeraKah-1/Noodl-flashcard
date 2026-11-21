@@ -70,3 +70,19 @@ This error means the currently connected ChatGPT host did **not** provide a tran
 If no authorized hosting/editor path is available, share this source ZIP with the actual Sites project administrator. Plugin Creator can edit eligible plugin package metadata, but does **not** publish a replacement Cloudflare Worker or change an existing app's MCP URL by itself.
 
 Current-deck mapping file: `serologi-tifoid-media-rescue-v0.4.json` is distributed separately from source code. It lists six source images and twelve proposed card-specific attachments. Each approval is still pending. Never use earlier deck IDs or revisions as mutable API arguments without a fresh get_deck.
+
+## v0.5: Enable hierarchical deck folders
+
+When upgrading the **same** authenticated Noodl Flashcards database from v0.4, preserve its D1 binding and user data. After backing up the database, apply only `migrations/0004_folders.sql` (new `folders` table and nullable `decks.folder_id` column). Publish the new Worker/UI and refresh the ChatGPT plugin tool registry. Verify `get_capabilities.version` returns `0.5.0` and `list_folders`/`move_deck_to_folder` are visible, then test creating and moving a test deck and deleting a test folder before touching Serologi Tifoid. The existing 64 flashcards do not move automatically and their rating/image state is unchanged.
+
+For complete API behavior, permissions, race/conflict handling and deletion safety, see `docs/FOLDERS_v0.5.md`. The source archive is **not** a live deployment.
+
+
+## v0.6: Sequential OSCE checklist decks (no new migration)
+
+Back up the existing D1 database, then deploy this Worker/UI against the **same** DB and R2 binding; no SQL schema change is needed. `procedureStep` is stored as additional JSON in `cards.content_json` and does not change ordinary flashcard data or review IDs. Check both MCP `get_capabilities.version` and `initialize.serverInfo.version` return `0.6.0`; refresh the ChatGPT plugin schema registry so `create_deck` exposes `procedureStep` guidance. Create a test deck using `examples/OSCE_TILIK_DEMO_NOT_OFFICIAL.json`, verify sequential full-deck order, "Pelajari teknik"/"Ingat urutan", timer and clue disabled for procedural decks, image review gate unchanged, and existing Serologi Tifoid still has 64 cards. Do not treat source ZIP as deployed. See `docs/OSCE_TILIK_IMPORT.md`.
+
+
+## v0.7 Layered Reading (no database migration)
+
+See `docs/LAYERED_READING_v0.7.md`. Back up the existing D1/R2 account data, deploy the v0.7 Worker and UI while keeping the same storage bindings, invalidate service worker caches, and verify both MCP version endpoints return `0.7.0`. Existing cards retain IDs and text. New optional `explanation.sections` remains in the existing JSON column. Validate a 64-card deck with very long back text and the OSCE player in a real ChatGPT host before advertising a successful production release.

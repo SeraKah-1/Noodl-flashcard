@@ -6,6 +6,14 @@ A new, independent prototype inspired by the visual language of [Noodl](https://
 
 The implementation is **dependency-free browser JavaScript and a Cloudflare Worker**, rather than a direct copy of upstream React. The goal is a lean independent implementation with real tests and a functional offline local demo. If a React source-to-source migration is required later, treat that as a separate implementation choice, not something already completed here.
 
+## v0.7 — long text no longer becomes inaccessible
+
+- Fixed overflowing centered card content so the first line stays reachable and the full text scrolls in both card faces.
+- Added a **Baca lengkap** reading panel with its own vertical scroll, front/back tabs (no premature answer reveal), and optional `explanation.sections` for detailed reference material.
+- Old cards keep their full `front` and `back` content. No truncation and no new SQL migration. Cloud media approval remains mandatory; explanation cannot sneak unapproved images into a card.
+- Test `python scripts/smoke_long_text.py`; details and deployment gates in [docs/LAYERED_READING_v0.7.md](docs/LAYERED_READING_v0.7.md).
+- **Local source release only; v0.7 has not been deployed to the active ChatGPT Noodl plugin.**
+
 ## What actually works
 
 - Four destinations: **Home, Decks, Review, Settings**; original-inspired violet, translucent, kaomoji and floating dock design.
@@ -130,3 +138,19 @@ New v0.3 MCP tools: `create_visual_candidate`, `submit_source_check`, `submit_vi
 Image lifecycle: `pending` binary → real preview + account user asset approval → candidate for existing card → A source report → B final stored-image report → user approval for exact card → atomic attach. `cardContentSha256` ignores already attached image blocks so adding the approved image does not invalidate the card's question/answer content; editing front/back text **does** invalidate it. Imported slides without original source-document bytes kept on the server remain truthfully labeled `unverified_host_context`. No AI report is independent medical certification.
 
 Test UI: `python scripts/smoke_visual_ui.py` uses a **mocked ChatGPT host** to validate the exact image preview, report display, user controls and attach callback. This is NOT a real MCP transfer or live deployment test.
+
+---
+
+## v0.5 — Nested folders (new)
+
+**New:** folder tree in My decks (create, open, rename, move, delete folder), move any existing deck into a folder, global folder/deck search, and context-aware ChatGPT creation inside the selected folder. Backups include `folders`. Each account has an isolated folder tree, with a maximum of six nested levels. Deleting a folder relocates its decks and child folders to its parent without deleting any cards or review history; name collisions fail safely.
+
+**MCP tools:** `list_folders`, `create_folder`, `rename_folder`, `move_folder`, `delete_folder`, `move_deck_to_folder`; `create_deck` accepts an optional `folderId`. Reads and snapshots include folder metadata. Existing image-approval gates are unchanged.
+
+**Migration:** for a database already on v0.4, back up and apply only `migrations/0004_folders.sql` before deploying the updated Worker and UI. Existing decks remain at root until moved. For a new database, apply migrations `0001` through `0004` in order. See [docs/FOLDERS_v0.5.md](docs/FOLDERS_v0.5.md) for tool parameters, deletion semantics, migration checks, and test instructions.
+
+**Verification:** `npm run check` and `npm test` (38 tests passed in local environment), plus browser interaction tests in desktop and 390px mobile view. Live ChatGPT plugin deployment and migrations on the existing private database are **not yet performed**. This ZIP does not itself activate the feature on the user's connected plugin.
+
+## Daftar tilik OSCE, tanpa aplikasi kedua
+
+Buat deck dengan `procedureStep` pada setiap kartu. Player otomatis mengenali tilik, mempertahankan urutan, menyediakan **Pelajari teknik** dan **Ingat urutan** di kartu yang sama, dan menonaktifkan timer/clue selama latihan prosedur. Foto alat/tindakan hanya dapat dipakai setelah pemeriksaan gambar dan persetujuan. Baca `docs/OSCE_TILIK_IMPORT.md` dan contoh **bukan panduan medis** di `examples/OSCE_TILIK_DEMO_NOT_OFFICIAL.json`. Versi ini **tidak perlu migrasi database baru**; plugin produksi tetap perlu upgrade agar opsi tilik tersedia.

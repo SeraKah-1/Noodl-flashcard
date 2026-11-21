@@ -46,3 +46,23 @@ export class CardClock {
   expired(now){return this.elapsed(now)>=this.durationMs;}
   restart(now){this.elapsedMs=0;this.runningSince=now;}
 }
+
+/** A procedural checklist is the existing flashcard deck in a fixed, auditable order.
+ * No new assessment engine, AI provider, or automatic clinical proficiency score. */
+export function isProcedureDeck(cards){
+ return Array.isArray(cards)&&cards.length>0&&cards.every(c=>Number.isInteger(c?.procedureStep?.order));
+}
+export function assertProcedureSequence(cards,firstOrder=1){
+ if(!Array.isArray(cards)||!cards.length)throw Error('Procedure sequence needs at least one card');
+ const count=cards.filter(c=>c?.procedureStep!==undefined&&c?.procedureStep!==null).length;
+ if(count===0)return 'standard';
+ if(count!==cards.length)throw Error('Do not mix procedure steps with normal flashcards');
+ for(let i=0;i<cards.length;i++){
+  if(cards[i].procedureStep.order!==firstOrder+i)throw Error(`Procedure steps must be consecutive and in source order: expected ${firstOrder+i}`);
+ }
+ return 'procedure';
+}
+export function orderedProcedureCards(cards){
+ if(!isProcedureDeck(cards))return cards;
+ return [...cards].sort((a,b)=>a.procedureStep.order-b.procedureStep.order);
+}

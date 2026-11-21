@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {readFileSync} from 'node:fs';import {callTool} from '../worker/index.js';
 function memoryD1(){
- const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON;');sqlite.exec(readFileSync('migrations/0001.sql','utf8'));sqlite.exec(readFileSync('migrations/0002_visual_validation.sql','utf8'));
+ const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON;');sqlite.exec(readFileSync('migrations/0001.sql','utf8'));sqlite.exec(readFileSync('migrations/0002_visual_validation.sql','utf8'));sqlite.exec(readFileSync('migrations/0004_folders.sql','utf8'));
  const prepare=sql=>({bind(...args){return {first:async()=>sqlite.prepare(sql).get(...args),all:async()=>({results:sqlite.prepare(sql).all(...args)}),run:async()=>sqlite.prepare(sql).run(...args),sql,args};}});
  return {prepare,async batch(statements){sqlite.exec('BEGIN');try{const output=statements.map(s=>sqlite.prepare(s.sql).run(...s.args));sqlite.exec('COMMIT');return output;}catch(e){sqlite.exec('ROLLBACK');throw e;}},sqlite};
 }

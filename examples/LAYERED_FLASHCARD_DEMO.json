@@ -1,0 +1,23 @@
+{
+  "title": "DEMO — Layered Flashcards (bukan panduan klinis)",
+  "description": "Contoh jawaban inti dan pembahasan terpisah untuk menguji pembaca v0.7.",
+  "cards": [
+    {
+      "front": [{"type":"text","text":"Apa perbedaan jawaban inti dan pembahasan?"}],
+      "back": [{"type":"text","text":"Jawaban inti memberi informasi yang harus diingat terlebih dahulu."}],
+      "explanation": {
+        "sections": [
+          {"heading":"Mengapa dipisah?","blocks":[{"type":"text","text":"Kartu singkat membantu fokus pada satu hal. Pembahasan menyimpan alasan, penjelasan, dan konteks lengkap agar informasi tidak dihilangkan. Pengguna dapat membuka Baca lengkap, menggulir seluruh isi, dan kembali ke kartu."}]},
+          {"heading":"Jika jawabannya panjang","blocks":[{"type":"text","text":"Teks lama tidak dibuang. Bagian depan dan belakang tetap bisa digulir vertikal dari awal hingga akhir. Dalam format baru, jawaban inti cukup singkat, sedangkan mekanisme atau pengecualian disimpan pada bagian pembahasan. Gambar yang perlu diverifikasi harus dipasang lewat alur media kartu."}]}
+        ]
+      },
+      "clues": [
+        {"atSecond":5,"text":"Perhatikan dua tingkat kedalaman."},
+        {"atSecond":10,"text":"Bagian yang satu untuk ingatan singkat."},
+        {"atSecond":15,"text":"Bagian lain menjelaskan alasannya."}
+      ],
+      "timerSeconds":20,
+      "tags":["DEMO","Layered Reading"]
+    }
+  ]
+}

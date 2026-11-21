@@ -72,3 +72,12 @@ App-only `app_begin_media_review` creates a time-limited preview challenge. It i
 6. If content or media changes, old binding becomes stale and a fresh A/B/approval cycle is required.
 
 For internet media, `provenance.licenseEvidenceUrl` now must reference an HTTPS page with the reuse license claim. The actual image can reside on a different approved CDN host from the source landing page; Noodl still requires `ALLOWED_IMAGE_HOSTS`. A license claim is not an independent legal audit.
+
+## v0.5: ChatGPT folder placement
+
+Call `list_folders` before placing a new deck, or create the destination with `create_folder` (`name`, optional `parentId`). Use the **returned ID** as `folderId` in `create_deck`—never invent a folder ID or treat the folder's display name as its ID. To relocate an existing deck, read `list_decks`/`get_deck` to obtain its latest revision, then call `move_deck_to_folder({operationId,deckId,expectedRevision,folderId})`. Relocation does not change card/review records. All folder operations are owner-scoped and revision guarded. Deleting a folder moves its immediate subfolders and decks into the parent folder; it does not delete them. See `docs/FOLDERS_v0.5.md`.
+
+
+## v0.6: Checklist tilik OSCE (tanpa MCP tool tambahan)
+
+The existing `create_deck` / `append_cards` tools accept `procedureStep` on **every** card in a checklist deck. Orders must start at 1 and remain contiguous, with original checklist item in `checklistItem`, accurate `sourceDocument` and optional `sourcePage`, optional `phase`, and `critical` true **only when marked critical by the actual source**. `clues` can be `[]`; UI automatically disables timer/clue for procedure decks and offers in-player technique/sequence practice. Media approval remains mandatory per card. On any missing/unclear source, ask for the actual checklist; do not make up procedure or claim observed competence. Existing flashcards are unchanged.

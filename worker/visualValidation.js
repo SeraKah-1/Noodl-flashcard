@@ -12,7 +12,7 @@ function str(v,label,max=1600,min=1){if(typeof v!=='string'||v.trim().length<min
 async function digest(bytes){const b=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));return Array.from(b,x=>x.toString(16).padStart(2,'0')).join('')}
 const enc=new TextEncoder();
 function textBlock(b){return b.type==='image'?null:b;}
-export function semanticContent(card){return {front:(card.front||[]).map(textBlock).filter(Boolean),back:(card.back||[]).map(textBlock).filter(Boolean)};}
+export function semanticContent(card){const content={front:(card.front||[]).map(textBlock).filter(Boolean),back:(card.back||[]).map(textBlock).filter(Boolean)};if(card.procedureStep)content.procedureStep=card.procedureStep;if(card.explanation)content.explanation=card.explanation;return content;}
 export async function semanticHash(card){return digest(enc.encode(JSON.stringify(semanticContent(card))));}
 async function cardRow(env,owner,deckId,cardId){
  const row=await env.DB.prepare('SELECT c.content_json,c.position,c.id AS card_id,d.revision AS deck_revision FROM cards c JOIN decks d ON d.id=c.deck_id AND d.owner_id=c.owner_id WHERE c.owner_id=? AND c.deck_id=? AND c.id=? AND d.deleted_at IS NULL').bind(owner,deckId,cardId).first();

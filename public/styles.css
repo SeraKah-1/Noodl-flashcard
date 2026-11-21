@@ -42,3 +42,121 @@ html[data-reduced-motion="true"] body.in-player .flash-motion.enter-from-right {
 .visual-review-modal .modal-panel{max-height:calc(100dvh - 24px);overscroll-behavior:contain;}
 .visual-review-modal .modal-footer{position:sticky;bottom:-16px;padding:12px 0 4px;background:#fcfaff;}
 @media(max-width:520px){.visual-review-modal{padding:9px}.visual-review-modal .modal-panel{border-radius:18px;max-height:calc(100dvh - 18px)}.visual-review-modal .modal-image{max-height:35dvh}.visual-review-modal .modal-footer .button{width:100%;white-space:normal}}
+
+/* v0.5: hierarchical, account-scoped folder library */
+.folder-crumbs{margin:24px 0 6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.folder-crumbs button{border:0;background:transparent;padding:7px 8px;border-radius:8px;color:var(--violet-dark);font-weight:750;max-width:240px;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
+.folder-crumbs button:hover{background:#ede8fb}
+.folder-section{margin:24px 0 30px}.folder-section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px}
+.folder-section-head h2{display:flex;align-items:center;gap:11px}.folder-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}
+.folder-tile{background:#fffefef0;border:1px solid #e5dff1;border-radius:20px;padding:13px;box-shadow:0 5px 18px #65509a09;min-width:0;transition:transform .16s,box-shadow .16s}
+.folder-tile:hover{transform:translateY(-2px);box-shadow:0 12px 25px #65509a12}
+.folder-open{width:100%;display:flex;align-items:center;gap:12px;text-align:left;border:0;background:transparent;padding:3px;min-height:57px;color:var(--ink)}
+.folder-symbol{width:53px;height:49px;border-radius:14px;background:#f2efff;display:grid;place-items:center;font-size:26px;flex-shrink:0}
+.folder-info{display:grid;gap:3px;flex:1;min-width:0}.folder-info strong{font:750 15px 'Outfit',sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.folder-info small{font-size:11px;color:var(--muted)}.folder-arrow{font-size:24px;color:var(--violet);padding-right:4px}
+.folder-actions{border-top:1px solid #f0edf7;margin-top:10px;padding:8px 2px 0;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
+.folder-actions button{font-size:11px;font-weight:750;color:var(--violet-dark);background:none;border:0;padding:6px 7px;border-radius:7px}
+.folder-actions button:hover{background:#f0ecfb}.folder-actions button:last-child{color:#b84c63}
+.folder-empty{font-size:12px;color:var(--muted);background:#ffffff7a;border:1px dashed #e8e2f2;padding:18px;border-radius:14px}
+.deck-wrapper{position:relative;min-width:0}.deck-wrapper .deck-tile{width:100%;height:100%;padding-bottom:58px}
+.deck-move-action{position:absolute;bottom:13px;right:12px;font-size:11px;font-weight:750;color:var(--violet-dark);background:#f6f3fe;border:1px solid #e3dcf4;padding:8px 10px;border-radius:10px}
+.deck-move-action:hover{background:#eae2ff}
+.folder-dialog{max-width:500px}.folder-dialog .folder-input{width:100%;max-width:none;margin:6px 0 14px}
+.folder-label{font-size:12px;font-weight:750;color:#63577a;display:block;margin-top:14px}
+@media(max-width:770px){.library-tools{flex-wrap:wrap}.library-tools .search{max-width:none;flex-basis:100%}.folder-grid{grid-template-columns:1fr}}
+@media(max-width:520px){.folder-crumbs{margin:13px 0 4px}.folder-section{margin:20px 0}.library-tools{gap:8px}.library-tools .button{flex:1;padding:10px;font-size:12px}.folder-tile{border-radius:17px}.folder-dialog .modal-footer .button{flex:1}}
+
+/* OSCE is a presentation of ordinary ordered flashcards, not a separate app module. */
+.mini-procedure{display:inline-flex;font-size:.6em;line-height:1.3;vertical-align:middle;letter-spacing:.08em;background:rgba(133,94,217,.12);color:var(--violet);padding:3px 6px;border-radius:7px;white-space:nowrap}
+.procedure-modes{display:flex;justify-content:center;gap:8px;margin:9px 0 12px}
+.procedure-modes .button{padding:9px 13px;font-size:.84rem}
+.sequence-recall{font-size:clamp(1.2rem,3.8vw,1.85rem);font-weight:760;text-align:center;line-height:1.3}
+.sequence-recall small{display:block;margin-top:13px;font-size:.49em;font-weight:500;color:var(--muted);line-height:1.5}
+.procedure-rubric{display:flex;flex-direction:column;gap:7px;border-bottom:1px solid rgba(123,104,167,.18);padding-bottom:12px;margin-bottom:12px;line-height:1.42}
+.procedure-rubric small{font-size:.78em;color:var(--muted)}
+.critical-note{font-size:.72em;color:#9a4215;background:#fff0df;border:1px solid #e4a676;padding:5px 8px;border-radius:8px}
+.procedure-source{font-size:.7em;color:var(--muted);border-top:1px solid rgba(123,104,167,.18);padding-top:10px;margin-top:12px}
+@media(max-width:480px){.procedure-modes .button{padding:9px 10px;font-size:.75rem}.procedure-rubric{font-size:.93em}}
+
+.session-head>div:nth-child(2){flex:1;min-width:0}
+.session-title{font-size:clamp(16px,2.4vw,22px);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+@media(max-width:520px){.session-head{gap:5px}.session-head>.button,.session-head>div>.button{font-size:10px;padding:9px 8px;min-height:36px}.session-head .session-title{font-size:16px;line-height:1.18}.session-head .session-sub{font-size:10px}}
+
+/* v0.7 — The root cause of the invisible first lines was flex justify-content:center
+   on an overflowing scroller. Top-align content and make the viewport height explicit. */
+body.in-player .flash-stage {height:clamp(360px,56dvh,570px);min-height:0;}
+body.in-player .flash-motion, body.in-player .flash-scene {height:100%;min-height:0;}
+body.in-player .flash-face {min-height:0;overflow:hidden;}
+body.in-player .flash-face .face-top,
+body.in-player .flash-face .face-footer {flex:0 0 auto;}
+body.in-player .face-content {
+  flex:1 1 auto;min-height:0;min-width:0;
+  justify-content:flex-start;align-items:stretch;
+  overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:contain;
+  padding:16px 4px 22px;scrollbar-gutter:stable;touch-action:pan-y;
+  -webkit-overflow-scrolling:touch;
+}
+body.in-player .face-content>* {flex:0 0 auto;min-width:0;max-width:100%;}
+body.in-player .face-content:not(.answer) .block-text {text-align:center;}
+body.in-player .face-content.answer .block-text {text-align:left;}
+body.in-player .face-content figure {align-self:center;}
+body.in-player .face-content:focus-visible {outline:2px solid #b5a8fa;outline-offset:-2px;border-radius:12px;}
+body.in-player .session-title {overflow-wrap:anywhere;hyphens:auto;}
+body.in-player .session-head>div:nth-child(2) {min-width:0;}
+body.in-player .player-controls .button {white-space:normal;text-align:center;}
+.answer-more-label {font-size:12px;line-height:1.5;color:#6d5bc8;background:#f4f0ff;border:1px solid #e6ddff;border-radius:12px;padding:12px;text-align:left;}
+/* Full reading is a separate surface: its scrolling never competes with swipe. */
+body.reading-open {overflow:hidden;}
+.reader-overlay {position:fixed;z-index:110;inset:0;display:flex;align-items:stretch;justify-content:flex-end;}
+.reader-backdrop {position:absolute;inset:0;background:#231b41b8;backdrop-filter:blur(5px);}
+.reader-panel {position:relative;display:flex;flex-direction:column;width:min(720px,100%);height:100dvh;min-height:0;background:#fcfaff;border-left:1px solid #e9e0f5;box-shadow:-16px 0 60px #24193b44;overflow:hidden;}
+.reader-top {display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:clamp(16px,3vw,28px);padding-bottom:8px;flex:0 0 auto;min-width:0;}
+.reader-top>div {min-width:0;}
+.reader-top h2 {font:800 clamp(21px,3vw,30px)/1.2 'Outfit',sans-serif;margin:6px 0;overflow-wrap:anywhere;}
+.reader-top p {font-size:12px;color:var(--muted);margin:6px 0 0;overflow-wrap:anywhere;}
+.reader-top .button {flex:0 0 auto;}
+.reader-tabs {display:flex;gap:8px;padding:8px clamp(16px,3vw,28px) 14px;border-bottom:1px solid #e9e1f3;flex:0 0 auto;}
+.reader-tab {background:#f0ebfb;border:1px solid transparent;color:#65568b;padding:11px 16px;border-radius:12px;font-size:13px;font-weight:800;}
+.reader-tab.selected {color:#fff;background:var(--violet);}
+.reader-content {flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y;scrollbar-gutter:stable;}
+.reader-text {padding:clamp(18px,3vw,30px);padding-bottom:10px;display:flex;flex-direction:column;align-items:stretch;gap:18px;min-height:min-content;}
+.reader-text .block-text {font:500 clamp(16px,2.1vw,19px)/1.8 'Outfit',sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink);}
+.reader-text .math {font:500 16px/1.6 monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:#f2edfb;border-radius:12px;padding:14px;}
+.reader-text figure {margin:4px 0;max-width:100%;text-align:center;}
+.reader-text img {display:block;max-width:100%;max-height:60dvh;object-fit:contain;border-radius:13px;margin:0 auto;border:1px solid var(--line);cursor:zoom-in;}
+.reader-text figcaption {color:var(--muted);font-size:12px;margin-top:8px;}
+.reader-text .embedded-video {margin:0;}
+.reader-explanation {margin-top:12px;padding-top:22px;border-top:2px solid #e5ddf5;display:flex;flex-direction:column;gap:24px;}
+.reader-section-heading {font:800 11px 'Outfit',sans-serif;letter-spacing:2px;color:var(--violet);}
+.reader-section {display:flex;flex-direction:column;gap:12px;}
+.reader-section h3 {font:800 21px/1.35 'Outfit',sans-serif;overflow-wrap:anywhere;margin:0;color:#382b68;}
+.reader-source {font:600 13px/1.65 'Outfit',sans-serif;color:#5c5378;background:#f2edfb;padding:15px;border-radius:13px;overflow-wrap:anywhere;}
+.reader-end {text-align:center;color:#8e88a3;font-size:12px;padding:16px 16px 40px;}
+.reader-bottom {flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:16px;border-top:1px solid #e6dff0;padding:12px clamp(16px,3vw,28px) max(12px,env(safe-area-inset-bottom));background:#fcfaff;}
+.reader-bottom span {font-size:11px;color:var(--muted);line-height:1.5;}
+.reader-bottom .button {white-space:normal;}
+@media(max-width:520px){
+  body.in-player .flash-stage {height:clamp(335px,49dvh,470px);min-height:0;}
+  body.in-player .flash-face {padding:15px 13px;}
+  body.in-player .face-content {padding:10px 1px 20px;scrollbar-gutter:auto;}
+  body.in-player .face-content .block-text {font-size:clamp(18px,5.3vw,22px);}
+  body.in-player .face-content.answer .block-text {font-size:clamp(16px,4.5vw,19px);}
+  body.in-player .session-head {align-items:flex-start;}
+  body.in-player .player-controls {gap:6px;}
+  body.in-player .player-controls .button {flex:1 1 31%;padding:10px 6px;font-size:11px;}
+  .reader-overlay {align-items:flex-end;}
+  .reader-panel {height:calc(100dvh - 9px);border-radius:24px 24px 0 0;border:0;}
+  .reader-top {padding:18px 16px 8px;}
+  .reader-top .button {font-size:12px;padding:8px 11px;}
+  .reader-tabs {padding:8px 16px 12px;}
+  .reader-tab {flex:1;font-size:12px;}
+  .reader-text {padding:20px 17px 12px;}
+  .reader-bottom {padding:10px 16px max(12px,env(safe-area-inset-bottom));}
+  .reader-bottom span {display:none;}
+  .reader-bottom .button {width:100%;}
+}
+
+/* When a short question fits, center it again. Auto margins collapse to zero
+   for overflowing content, leaving the first line reachable. */
+body.in-player .face-content:not(.answer)>.block-text:only-child {margin-block:auto;}

@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {readFileSync} from 'node:fs';
 import {storePendingImage,approveOwnerMedia,issueMediaReviewChallenge,getOwnerMedia,serveOwnerMedia} from '../worker/media.js';
 import {callTool} from '../worker/index.js';
-function database(){const db=new DatabaseSync(':memory:');db.exec(readFileSync('migrations/0001.sql','utf8'));db.exec(readFileSync('migrations/0002_visual_validation.sql','utf8'));
+function database(){const db=new DatabaseSync(':memory:');db.exec(readFileSync('migrations/0001.sql','utf8'));db.exec(readFileSync('migrations/0002_visual_validation.sql','utf8'));db.exec(readFileSync('migrations/0004_folders.sql','utf8'));
  return {prepare(sql){return {bind(...args){return {sql,args,first:async()=>db.prepare(sql).get(...args),run:async()=>db.prepare(sql).run(...args),all:async()=>({results:db.prepare(sql).all(...args)})}}}},async batch(commands){db.exec('BEGIN');try{const r=commands.map(q=>db.prepare(q.sql).run(...q.args));db.exec('COMMIT');return r;}catch(e){db.exec('ROLLBACK');throw e;}}};}
 function env(){const data=new Map();return {DB:database(),MEDIA:{async put(key,bytes){data.set(key,Uint8Array.from(bytes))},async get(key){const d=data.get(key);return d?{body:new Blob([d]).stream()}:null},async delete(key){data.delete(key)}},data};}
 test('real PNG requires human review challenge before it can enter a card',async()=>{

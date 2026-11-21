@@ -1,0 +1,146 @@
+{
+  "title": "DEMO — Format Tilik OSCE (bukan tilik resmi)",
+  "description": "Contoh struktur metadata, bukan checklist lengkap untuk praktik klinis atau ujian. Ganti SELURUH teks dan sumber dengan tilik fakultas yang kamu pakai.",
+  "cards": [
+    {
+      "front": [
+        {
+          "type": "text",
+          "text": "Apa yang perlu dilakukan pada langkah 1 menurut tilik?"
+        }
+      ],
+      "back": [
+        {
+          "type": "text",
+          "text": "Sapa pasien dan perkenalkan diri sesuai standar komunikasi pada tilik resmi."
+        }
+      ],
+      "clues": [],
+      "timerSeconds": 20,
+      "tags": [
+        "DEMO",
+        "Tilik"
+      ],
+      "procedureStep": {
+        "order": 1,
+        "checklistItem": "Contoh butir 1",
+        "phase": "Pembukaan",
+        "critical": false,
+        "sourceDocument": "DEMO SAJA - ganti dengan PDF tilik resmi",
+        "sourcePage": null
+      }
+    },
+    {
+      "front": [
+        {
+          "type": "text",
+          "text": "Apa yang perlu dilakukan pada langkah 2 menurut tilik?"
+        }
+      ],
+      "back": [
+        {
+          "type": "text",
+          "text": "Konfirmasi identitas pasien menurut prosedur lembaga sebelum tindakan."
+        }
+      ],
+      "clues": [],
+      "timerSeconds": 20,
+      "tags": [
+        "DEMO",
+        "Tilik"
+      ],
+      "procedureStep": {
+        "order": 2,
+        "checklistItem": "Contoh butir 2",
+        "phase": "Pembukaan",
+        "critical": false,
+        "sourceDocument": "DEMO SAJA - ganti dengan PDF tilik resmi",
+        "sourcePage": null
+      }
+    },
+    {
+      "front": [
+        {
+          "type": "text",
+          "text": "Apa yang perlu dilakukan pada langkah 3 menurut tilik?"
+        }
+      ],
+      "back": [
+        {
+          "type": "text",
+          "text": "Jelaskan tujuan dan langkah umum tindakan dengan bahasa yang dipahami pasien."
+        }
+      ],
+      "clues": [],
+      "timerSeconds": 20,
+      "tags": [
+        "DEMO",
+        "Tilik"
+      ],
+      "procedureStep": {
+        "order": 3,
+        "checklistItem": "Contoh butir 3",
+        "phase": "Penjelasan",
+        "critical": false,
+        "sourceDocument": "DEMO SAJA - ganti dengan PDF tilik resmi",
+        "sourcePage": null
+      }
+    },
+    {
+      "front": [
+        {
+          "type": "text",
+          "text": "Apa yang perlu dilakukan pada langkah 4 menurut tilik?"
+        }
+      ],
+      "back": [
+        {
+          "type": "text",
+          "text": "Minta persetujuan tindakan sesuai kebijakan setempat, sebelum memulai pemeriksaan."
+        }
+      ],
+      "clues": [],
+      "timerSeconds": 20,
+      "tags": [
+        "DEMO",
+        "Tilik"
+      ],
+      "procedureStep": {
+        "order": 4,
+        "checklistItem": "Contoh butir 4",
+        "phase": "Persetujuan",
+        "critical": false,
+        "sourceDocument": "DEMO SAJA - ganti dengan PDF tilik resmi",
+        "sourcePage": null
+      }
+    },
+    {
+      "front": [
+        {
+          "type": "text",
+          "text": "Apa yang perlu dilakukan pada langkah 5 menurut tilik?"
+        }
+      ],
+      "back": [
+        {
+          "type": "text",
+          "text": "Beri kesempatan bertanya, sampaikan langkah berikutnya, dan tutup interaksi dengan sopan."
+        }
+      ],
+      "clues": [],
+      "timerSeconds": 20,
+      "tags": [
+        "DEMO",
+        "Tilik"
+      ],
+      "procedureStep": {
+        "order": 5,
+        "checklistItem": "Contoh butir 5",
+        "phase": "Penutupan",
+        "critical": false,
+        "sourceDocument": "DEMO SAJA - ganti dengan PDF tilik resmi",
+        "sourcePage": null
+      }
+    }
+  ]
+}
