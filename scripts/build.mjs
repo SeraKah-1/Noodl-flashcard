@@ -29,6 +29,7 @@ await writeFile('dist/server/index.js', await readFile('hosting/worker.js', 'utf
 const migrations = [
   {tag: '0001', when: 1795219200000},
   {tag: '0002_visual_validation', when: 1795219200001},
+  {tag: '0003_chunked_media_upload', when: 1795219200002},
 ];
 for (const {tag} of migrations) {
   const sql = await readFile(`migrations/${tag}.sql`, 'utf8');

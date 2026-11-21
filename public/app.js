@@ -7,6 +7,7 @@ const safe=s=>String(s??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':
 const defaults={sound:true,haptics:true,timer:true,clues:true,reducedMotion:false,showSource:true};
 const state={route:'home',backend:'local',ownerId:'local',decks:[],reviews:[],media:[],visualBindings:[],queue:[],settings:{...defaults},session:null,modal:null,search:'',busy:false,prevReview:null,initialized:false};
 let store=null,toastTimer=null,rafId=null;
+const mediaFallbackPending=new Map(),mediaFallbackFailed=new Set();
 function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),3400);}
 function clockMs(){return performance.now()}
 function renderStatus(){const n=$('#syncStatus');n.textContent=state.backend==='embedded'?'ChatGPT MCP':state.backend==='web'?'Cloud sync':'Mode lokal';}
@@ -16,7 +17,7 @@ async function openStore(owner){
 }
 async function dbGet(key){if(!store)return undefined;return new Promise((resolve,reject)=>{const tx=store.transaction('kv','readonly'),q=tx.objectStore('kv').get(key);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});}
 async function dbSet(key,value){if(!store)return;return new Promise((resolve,reject)=>{const tx=store.transaction('kv','readwrite');tx.objectStore('kv').put(value,key);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);});}
-async function persist(){await dbSet('state',{decks:state.decks,reviews:state.reviews,media:state.media,visualBindings:state.visualBindings,queue:state.queue,settings:state.settings});}
+async function persist(){await dbSet('state',{decks:state.decks,reviews:state.reviews,media:state.backend==='local'?state.media:state.media.map(({dataUrl,...meta})=>meta),visualBindings:state.visualBindings,queue:state.queue,settings:state.settings});}
 function demoDeck(){return {id:'demo-noodl',title:'Sistem Saraf — Demo',description:'Kartu contoh untuk menguji swipe, timer, clue, dan review.',revision:1,updatedAt:new Date().toISOString(),cards:[
  {id:'demo-1',front:[{type:'text',text:'Apa fungsi utama mielin pada akson neuron?'}],back:[{type:'text',text:'Meningkatkan kecepatan hantaran impuls melalui konduksi saltatori.'}],clues:[{atSecond:5,text:'Berhubungan dengan lapisan pembungkus akson.'},{atSecond:10,text:'Fokus pada kecepatan rambat sinyal.'},{atSecond:15,text:'Impuls melompat antar nodus Ranvier.'}],timerSeconds:20,tags:['Neuroanatomi']},
  {id:'demo-2',front:[{type:'text',text:'Bagian neuron apa yang biasanya menerima sinyal dari sel lain?'}],back:[{type:'text',text:'Dendrit; sinyal kemudian diintegrasikan menuju badan sel.'}],clues:[{atSecond:5,text:'Struktur berbentuk cabang.'},{atSecond:10,text:'Letaknya di sekitar soma.'},{atSecond:15,text:'Namanya dimulai dengan huruf D.'}],timerSeconds:20,tags:['Neuroanatomi']},
@@ -64,18 +65,58 @@ function renderLibrary(){const filtered=state.decks.filter(d=>(d.title+' '+d.des
  return `<div class="screen"><div style="padding-top:38px"><span class="kicker">YOUR COLLECTION</span><h1 class="page-title">My decks <span style="color:var(--violet)">✦</span></h1><p class="page-intro">Semuanya tersimpan rapi. Tidak ada bank soal atau pengaturan generator yang numpang hidup di sini.</p></div><div class="library-tools"><input class="search" id="deckSearch" placeholder="Cari deck..." value="${safe(state.search)}" aria-label="Cari deck"/><button class="button primary" data-chat="1">✧ Deck baru</button></div>${filtered.length?`<div class="deck-grid">${filtered.map(deckTile).join('')}</div>`:`<div class="empty"><p>Deck tidak ditemukan.</p></div>`}<div class="notice">${state.backend==='local'?'Kamu sedang memakai mode lokal. Contoh deck dan progres review tersimpan di browser ini. Hubungkan deployment MCP agar ChatGPT dapat menyimpan deck ke akun yang sama.':'Deck dari ChatGPT tersinkronkan ke akun yang sedang terhubung. Gambar yang belum disetujui tidak dapat digunakan sebagai isi kartu.'}</div></div>`;
 }
 function renderReview(){const m=summary();return `<div class="screen narrow"><div style="padding-top:38px"><span class="kicker">PRACTICE MAKES PERMANENT</span><h1 class="page-title">Review <span style="color:var(--violet)">◈</span></h1><p class="page-intro">Tidak harus menunggu jawaban terbuka untuk swipe. Sebelum dibalik, rating hanyalah penilaian diri—bukan bukti benar.</p></div><section class="stats"><div class="stat"><div class="number">${m.due}</div><div class="label">Perlu review</div></div><div class="stat"><div class="number">${m.studied}</div><div class="label">Pernah dipelajari</div></div><div class="stat"><div class="number">${m.cards}</div><div class="label">Semua kartu</div></div></section><div class="settings-panel"><h3>Pilih deck</h3>${state.decks.length?state.decks.map(d=>`<div class="media-row"><div class="deck-icon">▧</div><div class="summary"><strong>${safe(d.title)}</strong><small>${d.cards.length} kartu</small></div><button class="button secondary" data-start-deck="${safe(d.id)}">Belajar →</button></div>`).join(''):'<p>Belum ada deck.</p>'}</div><div class="notice">Clue muncul pada detik ke-5, 10, dan 15. Pada detik ke-20, timer berhenti tanpa menilai kartu secara otomatis. Saat tab tidak aktif, waktu dijeda.</div></div>`;}
-function renderSettings(){return `<div class="screen narrow"><div style="padding-top:38px"><span class="kicker">MAKE IT YOURS</span><h1 class="page-title">Settings ⚙</h1><p class="page-intro">Noodl sesederhana yang diperlukan. Sesuaikan cara belajarnya.</p></div><div class="settings-panel"><h3>Pengalaman flashcard</h3>${[['timer','Timer 20 detik','Jeda saat tab tak terlihat atau jawaban dibuka.'],['clues','Tiga clue bertahap','Clue pada detik 5, 10, dan 15.'],['sound','Sound feedback','Efek suara pendek saat berinteraksi.'],['haptics','Getaran ringan','Hanya jika didukung perangkat.'],['reducedMotion','Kurangi animasi','Kurangi efek flip dan gerakan.'],['showSource','Tampilkan sumber gambar','Sumber, lisensi, dan status review.']].map(([key,label,desc])=>`<label class="toggle-row"><div><strong>${label}</strong><p>${desc}</p></div><input type="checkbox" data-setting="${key}" ${state.settings[key]?'checked':''}/></label>`).join('')}</div><div class="settings-panel"><h3>Media & pemeriksaan visual</h3><p class="note">Gambar wajib diverifikasi format, dimensi, dan kecocokan visual. Tanpa persetujuan pratinjau, kartu tidak boleh menggunakan aset baru.</p><div class="upload"><input id="mediaFile" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Unggah gambar"/><button class="button secondary" id="uploadMedia">Unggah gambar</button></div><div id="mediaList">${state.media.length?state.media.map(mediaRow).join(''):'<p class="note">Belum ada gambar. Unggah PNG, JPEG atau WebP.</p>'}</div></div><div class="settings-panel"><h3>Pemeriksaan gambar per kartu</h3><p class="note">Persetujuan aset belum membuktikan kecocokannya dengan sebuah kartu. Dua laporan sumber dan visual harus diikuti persetujuanmu untuk kartu tertentu.</p><div id="visualBindingList">${state.visualBindings.length?state.visualBindings.map(bindingRow).join(''):'<p class="note">Belum ada kandidat. Pilih tombol Pasang pada gambar yang sudah disetujui, lalu minta ChatGPT melakukan dua pemeriksaan MCP.</p>'}</div></div><div class="settings-panel"><h3>Akun & penyimpanan</h3><p class="note">Status: <strong>${state.backend==='local'?'Lokal / browser':state.backend==='embedded'?'ChatGPT MCP':'Cloud'}</strong>. Database lokal dipisah berdasarkan identitas akun. Media cloud tersimpan di bucket privat.</p><button class="button secondary" id="refreshData">↻ Sinkronkan sekarang</button><button class="button secondary" id="exportLocal" style="margin-left:7px">Ekspor data JSON</button></div></div>`;}
-function mediaRow(m){return `<div class="media-row"><img class="media-thumb" src="${safe(mediaSrc(m.id))}" alt="Pratinjau media"/><div class="summary"><strong>${safe(m.provenance?.origin||m.id)}</strong><small class="${safe(m.status)}">${safe(m.status)} · ${m.width}×${m.height} · ${safe(m.provenance?.kind||'file')}</small></div>${m.status==='pending'?`<button class="button secondary" data-preview="${safe(m.id)}">Periksa</button>`:m.status==='approved'?`<button class="button secondary" data-preview="${safe(m.id)}">Lihat</button><button class="button primary" data-attach-image="${safe(m.id)}">Pilih kartu</button>`:'<span class="chip">Ditolak</span>'}</div>`;}
-function bindingRow(b){const label=state.decks.flatMap(d=>d.cards?.map(c=>({d,c}))||[]).find(x=>x.c.id===b.cardId);return `<div class="media-row"><img class="media-thumb" src="${safe(mediaSrc(b.mediaId))}" alt="Visual kandidat"/><div class="summary"><strong>${safe(label?.c?.front?.find(x=>x.type==='text')?.text||'Kartu '+b.cardId).slice(0,110)}</strong><small>${safe(b.status)} · ${safe(b.provenance?.origin||'Sumber')} · ${safe(b.side)}</small></div>${b.status==='awaiting_user_approval'?`<button class="button primary" data-review-binding="${safe(b.bindingId)}">Periksa untuk kartu</button>`:b.status==='approved_for_card'?`<button class="button primary" data-attach-binding="${safe(b.bindingId)}">Pasang</button>`:`<button class="button secondary" data-review-binding="${safe(b.bindingId)}">Audit</button>`}</div>`}
+function renderSettings(){return `<div class="screen narrow"><div style="padding-top:38px"><span class="kicker">MAKE IT YOURS</span><h1 class="page-title">Settings ⚙</h1><p class="page-intro">Noodl sesederhana yang diperlukan. Sesuaikan cara belajarnya.</p></div><div class="settings-panel"><h3>Pengalaman flashcard</h3>${[['timer','Timer 20 detik','Jeda saat tab tak terlihat atau jawaban dibuka.'],['clues','Tiga clue bertahap','Clue pada detik 5, 10, dan 15.'],['sound','Sound feedback','Efek suara pendek saat berinteraksi.'],['haptics','Getaran ringan','Hanya jika didukung perangkat.'],['reducedMotion','Kurangi animasi','Kurangi efek flip dan gerakan.'],['showSource','Tampilkan sumber gambar','Sumber, lisensi, dan status review.']].map(([key,label,desc])=>`<label class="toggle-row"><div><strong>${label}</strong><p>${desc}</p></div><input type="checkbox" data-setting="${key}" ${state.settings[key]?'checked':''}/></label>`).join('')}</div><div class="settings-panel"><h3>Media & pemeriksaan visual</h3><p class="note">Gambar wajib diverifikasi format, dimensi, dan kecocokan visual. Tanpa persetujuan pratinjau, kartu tidak boleh menggunakan aset baru.</p><div class="upload"><input id="mediaFile" type="file" accept="image/png,image/jpeg,image/webp" multiple aria-label="Unggah satu atau beberapa gambar"/><button class="button secondary" id="uploadMedia">Unggah gambar</button></div><div id="mediaList">${state.media.length?state.media.map(mediaRow).join(''):'<p class="note">Belum ada gambar. Unggah PNG, JPEG atau WebP.</p>'}</div></div><div class="settings-panel"><h3>Pemeriksaan gambar per kartu</h3><p class="note">Persetujuan aset belum membuktikan kecocokannya dengan sebuah kartu. Dua laporan sumber dan visual harus diikuti persetujuanmu untuk kartu tertentu.</p><div id="visualBindingList">${state.visualBindings.length?state.visualBindings.map(bindingRow).join(''):'<p class="note">Belum ada kandidat. Pilih tombol Pasang pada gambar yang sudah disetujui, lalu minta ChatGPT melakukan dua pemeriksaan MCP.</p>'}</div></div><div class="settings-panel"><h3>Akun & penyimpanan</h3><p class="note">Status: <strong>${state.backend==='local'?'Lokal / browser':state.backend==='embedded'?'ChatGPT MCP':'Cloud'}</strong>. Database lokal dipisah berdasarkan identitas akun. Media cloud tersimpan di bucket privat.</p><button class="button secondary" id="refreshData">↻ Sinkronkan sekarang</button><button class="button secondary" id="exportLocal" style="margin-left:7px">Ekspor data JSON</button></div></div>`;}
+function mediaRow(m){return `<div class="media-row"><img class="media-thumb" data-media-id="${safe(m.id)}" src="${safe(mediaSrc(m.id))}" alt="Pratinjau media"/><div class="summary"><strong>${safe(m.provenance?.origin||m.id)}</strong><small class="${safe(m.status)}">${safe(m.status)} · ${m.width}×${m.height} · ${safe(m.provenance?.kind||'file')}</small></div>${m.status==='pending'?`<button class="button secondary" data-preview="${safe(m.id)}">Periksa</button>`:m.status==='approved'?`<button class="button secondary" data-preview="${safe(m.id)}">Lihat</button><button class="button primary" data-attach-image="${safe(m.id)}">Pilih kartu</button>`:'<span class="chip">Ditolak</span>'}</div>`;}
+function bindingRow(b){const label=state.decks.flatMap(d=>d.cards?.map(c=>({d,c}))||[]).find(x=>x.c.id===b.cardId);return `<div class="media-row"><img class="media-thumb" data-media-id="${safe(b.mediaId)}" src="${safe(mediaSrc(b.mediaId))}" alt="Visual kandidat"/><div class="summary"><strong>${safe(label?.c?.front?.find(x=>x.type==='text')?.text||'Kartu '+b.cardId).slice(0,110)}</strong><small>${safe(b.status)} · ${safe(b.provenance?.origin||'Sumber')} · ${safe(b.side)}</small></div>${b.status==='awaiting_user_approval'?`<button class="button primary" data-review-binding="${safe(b.bindingId)}">Periksa untuk kartu</button>`:b.status==='approved_for_card'?`<button class="button primary" data-attach-binding="${safe(b.bindingId)}">Pasang</button>`:`<button class="button secondary" data-review-binding="${safe(b.bindingId)}">Audit</button>`}</div>`}
 function render(){if(!state.initialized)return;cancelAnimationFrame(rafId);if(state.route==='home')main.innerHTML=renderHome();else if(state.route==='library')main.innerHTML=renderLibrary();else if(state.route==='review')main.innerHTML=renderReview();else if(state.route==='settings')main.innerHTML=renderSettings();else if(state.route==='player')renderPlayer();}
 function mediaSrc(id){const media=state.media.find(x=>x.id===id);if(!media||media.status==='rejected')return '';if(media.dataUrl&&/^data:image\/(?:png|jpeg|webp);base64,/.test(media.dataUrl))return media.dataUrl;if(/^[a-f0-9-]{36}$/i.test(id))return '/api/media/'+encodeURIComponent(id);return '';}
+// A private image may fail to load via relative /api URLs in a sandboxed ChatGPT iframe.
+// Rehydrate exact stored R2 bytes through read-only, owner-checked MCP calls instead of showing broken images.
+async function ensureMediaViaMcp(id){
+ const m=state.media.find(x=>x.id===id);
+ if(m?.dataUrl)return m.dataUrl;
+ if(state.backend!=='embedded'||!m||mediaFallbackFailed.has(id))throw Error('No authenticated media fallback');
+ if(mediaFallbackPending.has(id))return mediaFallbackPending.get(id);
+ const task=(async()=>{
+  const chunks=[],count=Math.ceil(m.bytes/(96*1024));
+  if(!Number.isInteger(count)||count<1||count>43)throw Error('Stored media size is invalid');
+  for(let i=0;i<count;i++){
+   const part=await hostCall('app_get_media_chunk',{mediaId:id,index:i});
+   if(part.mediaId!==id||part.index!==i||part.chunkCount!==count||part.bytes!==m.bytes||part.mime!==m.mime||part.sha256!==m.sha256)throw Error('Stored media chunk metadata mismatch');
+   chunks.push(part.base64);
+  }
+  // Every chunk is independently base64-padded: never concatenate encoded chunks directly.
+  const bytes=new Uint8Array(m.bytes);let offset=0;
+  for(const part of chunks){
+   const binary=atob(part);
+   if(offset+binary.length>bytes.length)throw Error('Stored media chunk exceeds file size');
+   for(let i=0;i<binary.length;i++)bytes[offset+i]=binary.charCodeAt(i);
+   offset+=binary.length;
+  }
+  if(offset!==m.bytes)throw Error('Reconstructed image size does not match');
+  const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');
+  if(hash!==m.sha256)throw Error('Reconstructed image checksum mismatch');
+  let full='';for(let i=0;i<bytes.length;i+=8192)full+=String.fromCharCode(...bytes.subarray(i,i+8192));
+  m.dataUrl=`data:${m.mime};base64,${btoa(full)}`;
+  for(const image of document.querySelectorAll('img[data-media-id]'))if(image.dataset.mediaId===id)image.src=m.dataUrl;
+  return m.dataUrl;
+ })();
+ mediaFallbackPending.set(id,task);
+ try{return await task;}catch(e){mediaFallbackFailed.add(id);throw e;}finally{mediaFallbackPending.delete(id);}
+}
+document.addEventListener('error',event=>{
+ const img=event.target;
+ if(!(img instanceof HTMLImageElement)||!img.dataset.mediaId||state.backend!=='embedded')return;
+ const id=img.dataset.mediaId;if(mediaFallbackFailed.has(id))return;
+ void ensureMediaViaMcp(id).catch(e=>{console.warn('Image could not be read from private MCP storage',e.message)});
+},true);
 function blocksHtml(blocks){return (blocks||[]).map(b=>{
  if(b.type==='text')return `<div class="block-text">${safe(b.text)}</div>`;
  if(b.type==='math')return `<div class="math" role="math" aria-label="${safe(b.latex)}">${safe(b.latex)}</div>`;
  if(b.type==='image'){
   const img=mediaSrc(b.assetId),m=state.media.find(x=>x.id===b.assetId),label=m?.provenance?.origin;
   if(!img||m?.status!=='approved')return `<p class="note">Gambar tidak tersedia / belum disetujui.</p>`;
-  return `<figure><img src="${safe(img)}" alt="${safe(b.alt)}" data-zoom="${safe(b.assetId)}" loading="eager"/><figcaption>${safe(b.alt)}${state.settings.showSource&&label?` · ${safe(label)}`:''}</figcaption></figure>`;
+  return `<figure><img src="${safe(img)}" alt="${safe(b.alt)}" data-media-id="${safe(b.assetId)}" data-zoom="${safe(b.assetId)}" loading="eager"/><figcaption>${safe(b.alt)}${state.settings.showSource&&label?` · ${safe(label)}`:''}</figcaption></figure>`;
  }
  if(b.type==='embed'){
   try{const url=new URL(b.url);if(url.protocol!=='https:'||!['www.youtube-nocookie.com','www.youtube.com','youtu.be','player.vimeo.com','vimeo.com'].includes(url.hostname))return '<p>Embed tidak didukung.</p>';
@@ -276,22 +317,67 @@ async function localUpload(file){if(!file||file.size>4_000_000||!['image/png','i
  const m={id:uuid(),status:'pending',mime:file.type,width:w,height:h,bytes:file.size,provenance:{kind:'manual',origin:file.name,sourcePage:null,license:'',description:'Unggahan pengguna'},visualReview:{observation:'Belum diperiksa',legible:false,relevant:false},dataUrl:src};
  state.media.unshift(m);await persist();return m;
 }
-async function uploadMedia(){const file=$('#mediaFile')?.files?.[0];if(!file)return toast('Pilih file gambar terlebih dahulu.');
- try{
-  let m;
-  if(state.backend==='web'){
-   const body=new FormData();body.set('file',file);body.set('provenance',JSON.stringify({kind:'manual',origin:file.name,description:'Unggahan pribadi'}));const r=await fetch('/api/media/upload',{method:'POST',body});if(!r.ok)throw Error((await r.json()).error);m=await r.json();
-  }else if(state.backend==='embedded'&&window.openai?.uploadFile&&window.openai?.getFileDownloadUrl){
-   const uploaded=await window.openai.uploadFile(file,{library:true});const fileId=uploaded.fileId;const res=await window.openai.getFileDownloadUrl({fileId});m=await hostCall('import_media_file',{operationId:uuid(),file:{file_id:fileId,download_url:res.downloadUrl,mime_type:file.type,file_name:file.name},provenance:{kind:'manual',origin:file.name},visualReview:{observation:'User uploaded this image. Visual confirmation is pending in the Noodl UI.',legible:false,relevant:false}});
-  }else{m=await localUpload(file);}
-  if(state.backend!=='local')state.media.unshift(m);
-  await persist();render();toast('Gambar masuk karantina. Periksa visualnya sebelum digunakan.');
- }catch(e){toast('Gagal mengimpor gambar: '+e.message);}
+async function chunkUploadViaMcp(file){
+ if(!window.openai?.callTool)throw Error('MCP app tools tidak tersedia');
+ const provenance={kind:'manual',origin:file.name,description:'Unggahan langsung dari perangkat pengguna melalui MCP'};
+ const started=await hostCall('app_begin_media_upload',{byteLength:file.size,mimeType:file.type,fileName:file.name,provenance});
+ const chunkSize=started.chunkBytes||96*1024;
+ let sent=0;
+ for(let index=0;sent<file.size;index++){
+  const bytes=new Uint8Array(await file.slice(sent,Math.min(file.size,sent+chunkSize)).arrayBuffer());
+  let binary='';for(let k=0;k<bytes.length;k+=8192)binary+=String.fromCharCode(...bytes.subarray(k,k+8192));
+  const result=await hostCall('app_upload_media_chunk',{uploadId:started.uploadId,index,base64:btoa(binary)});
+  sent+=bytes.length;
+  if(result.receivedBytes!==sent)throw Error('Progres unggah MCP tidak cocok dengan jumlah byte dikirim');
+  const button=$('#uploadMedia');if(button)button.textContent=`Mengunggah ${Math.round(100*sent/file.size)}%`;
+ }
+ return hostCall('app_finish_media_upload',{uploadId:started.uploadId});
 }
+async function uploadOneImage(file){
+ if(!file||file.size<24||file.size>4_000_000||!['image/png','image/jpeg','image/webp'].includes(file.type))throw Error('Hanya PNG/JPEG/WebP maksimum 4 MB.');
+ if(state.backend==='local')return localUpload(file);
+ if(state.backend==='web'){
+  const body=new FormData();body.set('file',file);body.set('provenance',JSON.stringify({kind:'manual',origin:file.name,description:'Unggahan pribadi'}));
+  const r=await fetch('/api/media/upload',{method:'POST',body});if(!r.ok)throw Error((await r.json()).error);return r.json();
+ }
+ if(state.backend==='embedded'){
+  // Prefer native ChatGPT file transfer when present, but recover from host errors using chunked MCP transfer.
+  if(window.openai?.uploadFile&&window.openai?.getFileDownloadUrl){
+   try{
+    const uploaded=await window.openai.uploadFile(file,{library:false});
+    const fileId=uploaded?.fileId;if(!fileId)throw Error('Host did not return fileId');
+    const res=await window.openai.getFileDownloadUrl({fileId});
+    return await hostCall('import_media_file',{operationId:uuid(),file:{file_id:fileId,download_url:res.downloadUrl,mime_type:file.type,file_name:file.name},provenance:{kind:'manual',origin:file.name},visualReview:{observation:'An actual user-selected image was transferred. Needs a full visual preview before approval.',legible:false,relevant:false}});
+   }catch(error){console.warn('Native host transfer failed; trying direct MCP chunks:',error?.message||error);}
+  }
+  return chunkUploadViaMcp(file);
+ }
+ throw Error('Tidak ada cloud backend aktif; gambar belum dikirim.');
+}
+async function uploadMedia(){
+ const files=[...($('#mediaFile')?.files||[])];if(!files.length)return toast('Pilih satu atau beberapa file gambar.');
+ const button=$('#uploadMedia');if(button)button.disabled=true;
+ let success=0;const errors=[];
+ for(const file of files){
+  try{
+   if(button)button.textContent=`Unggah ${success+1}/${files.length}…`;
+   const media=await uploadOneImage(file);
+   if(state.backend!=='local')state.media.unshift(media);
+   success++;
+  }catch(e){errors.push(`${file.name}: ${e.message}`);}
+ }
+ await persist();render();
+ if(errors.length)toast(`${success} masuk karantina; ${errors.length} gagal: ${errors[0]}`);
+ else toast(`${success} gambar tersimpan sebagai pending. Lanjutkan pemeriksaan visual.`);
+}
+
 async function previewMedia(id){const media=state.media.find(m=>m.id===id);if(!media)return;if(state.session?.clock)state.session.clock.pause(clockMs());const src=mediaSrc(id);if(!src)return toast('Gambar sudah tidak tersedia');
- const image=new Image();image.src=src;try{await image.decode();}catch{if(state.session&&!state.session.flipped&&document.visibilityState==='visible')state.session.clock.resume(clockMs());return toast('Gambar gagal dibuka/didekode. Jangan disetujui.');}
+ let previewSrc=src;const image=new Image();image.src=previewSrc;try{await image.decode();}catch{
+  try{previewSrc=await ensureMediaViaMcp(id);image.src=previewSrc;await image.decode();}
+  catch{if(state.session&&!state.session.flipped&&document.visibilityState==='visible')state.session.clock.resume(clockMs());return toast('Gambar gagal dibuka/didekode melalui URL maupun MCP. Jangan disetujui.');}
+ }
  state.modal={id,rendered:true};
- modalRoot.innerHTML=`<div class="preview-modal" role="dialog" aria-modal="true" aria-labelledby="mediaTitle"><div class="modal-panel"><div class="session-head"><div><span class="kicker">VISUAL VERIFICATION GATE</span><h2 id="mediaTitle">Periksa gambar aslinya</h2></div><button class="button ghost" id="closePreview">Tutup ✕</button></div><p>Perbesar / tinjau gambar ini. Status tetap pending sampai kamu memeriksa kecocokan isi, sumber, dan keterbacaan label. Pemeriksaan format oleh server saja tidak cukup.</p><img id="fullPreview" class="modal-image" src="${safe(src)}" alt="Gambar lengkap untuk verifikasi manusia"/><div class="notice"><strong>Sumber:</strong> ${safe(media.provenance?.origin||'Tidak diketahui')} · ${media.width}×${media.height} · ${safe(media.mime)}<br><strong>Catatan AI:</strong> ${safe(media.visualReview?.observation||'Tidak ada pemeriksaan visual model')}<br><strong>Lisensi:</strong> ${safe(media.provenance?.license||'Tidak dicatat / bukan sumber web')}</div>${media.status==='pending'?`<form id="approveForm"><label class="checkline"><input type="checkbox" name="sourceMatches" required/> Saya melihat gambarnya dan memastikan sumber/halamannya sesuai materi.</label><label class="checkline"><input type="checkbox" name="labelsLegible" required/> Detail penting dan label gambar terbaca dengan benar.</label><label class="checkline"><input type="checkbox" name="contentRelevant" required/> Gambar sesuai isi kartu; tidak ada diagram/label keliru yang saya temukan.</label><textarea class="textarea" name="note" required minlength="12" maxlength="500" placeholder="Catatan pemeriksaan nyata, misalnya: Diagram menampilkan akson, label sel Schwann jelas, sesuai slide 7."></textarea><div class="modal-footer"><button type="button" class="button danger" id="rejectMedia">Tolak gambar</button><button type="submit" class="button primary">✓ Setujui setelah diperiksa</button></div></form>`:`<p class="notice">Status: <strong>${safe(media.status)}</strong>. Gambar sudah melalui gerbang persetujuan.</p>`}</div></div>`;
+ modalRoot.innerHTML=`<div class="preview-modal" role="dialog" aria-modal="true" aria-labelledby="mediaTitle"><div class="modal-panel"><div class="session-head"><div><span class="kicker">VISUAL VERIFICATION GATE</span><h2 id="mediaTitle">Periksa gambar aslinya</h2></div><button class="button ghost" id="closePreview">Tutup ✕</button></div><p>Perbesar / tinjau gambar ini. Status tetap pending sampai kamu memeriksa kecocokan isi, sumber, dan keterbacaan label. Pemeriksaan format oleh server saja tidak cukup.</p><img id="fullPreview" class="modal-image" data-media-id="${safe(id)}" src="${safe(previewSrc)}" alt="Gambar lengkap untuk verifikasi manusia"/><div class="notice"><strong>Sumber:</strong> ${safe(media.provenance?.origin||'Tidak diketahui')} · ${media.width}×${media.height} · ${safe(media.mime)}<br><strong>Catatan AI:</strong> ${safe(media.visualReview?.observation||'Tidak ada pemeriksaan visual model')}<br><strong>Lisensi:</strong> ${safe(media.provenance?.license||'Tidak dicatat / bukan sumber web')}</div>${media.status==='pending'?`<form id="approveForm"><label class="checkline"><input type="checkbox" name="sourceMatches" required/> Saya melihat gambarnya dan memastikan sumber/halamannya sesuai materi.</label><label class="checkline"><input type="checkbox" name="labelsLegible" required/> Detail penting dan label gambar terbaca dengan benar.</label><label class="checkline"><input type="checkbox" name="contentRelevant" required/> Gambar sesuai isi kartu; tidak ada diagram/label keliru yang saya temukan.</label><textarea class="textarea" name="note" required minlength="12" maxlength="500" placeholder="Catatan pemeriksaan nyata, misalnya: Diagram menampilkan akson, label sel Schwann jelas, sesuai slide 7."></textarea><div class="modal-footer"><button type="button" class="button danger" id="rejectMedia">Tolak gambar</button><button type="submit" class="button primary">✓ Setujui setelah diperiksa</button></div></form>`:`<p class="notice">Status: <strong>${safe(media.status)}</strong>. Gambar sudah melalui gerbang persetujuan.</p>`}</div></div>`;
  // Double check DOM decoded actual resource; no approval if decode fails on reviewed full preview.
  const imageEl=$('#fullPreview');let decoded=false;
  try{await imageEl.decode();decoded=imageEl.naturalWidth>=32&&imageEl.naturalHeight>=32;}catch{}

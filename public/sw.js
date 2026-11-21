@@ -1,4 +1,4 @@
-const VERSION='noodl-flashcards-v0.3-card-visual-validation';
+const VERSION='noodl-flashcards-v0.4-mcp-direct-image-transfer';
 const SHELL=['/','/index.html','/styles.css','/app.js','/shared/logic.js','/manifest.webmanifest'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(VERSION).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(Promise.all([caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==VERSION).map(k=>caches.delete(k)))),self.clients.claim()])));

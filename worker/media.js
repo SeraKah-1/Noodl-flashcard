@@ -82,6 +82,22 @@ export async function getOwnerMedia(env,owner,id){
 }
 export function mediaSummary(row){return {id:row.id,status:row.status,mime:row.mime,width:row.width,height:row.height,bytes:row.bytes,sha256:row.hash,provenance:JSON.parse(row.provenance_json),visualReview:JSON.parse(row.visual_review_json),approval:row.approval_json?JSON.parse(row.approval_json):null};}
 export async function listOwnerMedia(env,owner){const rows=await env.DB.prepare('SELECT * FROM media WHERE owner_id=? ORDER BY created_at DESC LIMIT 200').bind(owner).all();return rows.results.map(mediaSummary);}
+// Authenticated MCP fallback for embedded views where the browser cannot fetch a private /api/media URL.
+// Small ranged R2 reads avoid returning a multi-megabyte image in a single tool response.
+export async function readOwnerMediaChunk(env,owner,id,index){
+ if(!Number.isInteger(index)||index<0||index>1000)throw Error('Invalid media chunk index');
+ const row=await getOwnerMedia(env,owner,id);
+ if(row.status==='rejected')throw Error('Rejected image unavailable');
+ const chunkBytes=96*1024,offset=index*chunkBytes;
+ if(offset>=row.bytes)throw Error('Media chunk outside image');
+ const length=Math.min(chunkBytes,row.bytes-offset);
+ const object=await env.MEDIA.get(row.storage_key,{range:{offset,length}});
+ if(!object)throw Error('Image data missing');
+ const bytes=new Uint8Array(await object.arrayBuffer());
+ if(bytes.byteLength!==length)throw Error('R2 returned truncated image chunk');
+ let binary='';for(let n=0;n<bytes.length;n+=8192)binary+=String.fromCharCode(...bytes.subarray(n,n+8192));
+ return {mediaId:id,index,chunkCount:Math.ceil(row.bytes/chunkBytes),chunkBytes,bytes:row.bytes,mime:row.mime,sha256:row.hash,base64:btoa(binary)};
+}
 export async function serveOwnerMedia(env,owner,id){
  const row=await getOwnerMedia(env,owner,id);
  const object=await env.MEDIA.get(row.storage_key);if(!object)throw Error('Image data missing');

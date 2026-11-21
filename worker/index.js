@@ -1,6 +1,7 @@
 import {validateCard,validateDeckInput,validateReview,validateProvenance,validateVisualReview} from './validation.js';
-import {storePendingImage,fetchAllowedImage,getOwnerMedia,mediaSummary,listOwnerMedia,serveOwnerMedia,approveOwnerMedia,rejectOwnerMedia,issueMediaReviewChallenge,identifyImage} from './media.js';
+import {storePendingImage,fetchAllowedImage,getOwnerMedia,mediaSummary,listOwnerMedia,serveOwnerMedia,readOwnerMediaChunk,approveOwnerMedia,rejectOwnerMedia,issueMediaReviewChallenge,identifyImage} from './media.js';
 import {replayReviews} from '../shared/logic.js';
+import {beginChunkedUpload,appendChunkedUpload,finishChunkedUpload,purgeExpiredUploads} from './chunkedUpload.js';
 import {createCandidate,submitSourceCheck,submitVisualCheck,listVisualCandidates,inspectVisualBinding,beginVisualApproval,approveCardVisual,attachCardVisual,assertNoUnapprovedImages,invalidateCardBindings,semanticHash} from './visualValidation.js';
 const uuid=()=>crypto.randomUUID(),now=()=>new Date().toISOString();
 function fail(message,status=400){const e=new Error(message);e.status=status;throw e;}
@@ -118,7 +119,7 @@ async function listDue(env,owner){
 }
 async function importMediaFile(env,owner,args){
  const id=required(args.operationId,'operationId',120),prev=await opReceipt(env.DB,owner,id);if(prev)return prev;
- const file=args.file;if(!file||typeof file!=='object'||!/^file_[A-Za-z0-9_-]+$/.test(file.file_id))fail('A host-transferred file_id is required');
+ const file=args.file;if(!file||typeof file!=='object'||!/^file_[A-Za-z0-9_-]+$/.test(file.file_id)||typeof file.download_url!=='string')fail('Requires a host-transferred file object containing file_id and download_url; use in-app direct upload if unavailable');
  const provenance=validateProvenance(args.provenance),report=validateVisualReview(args.visualReview);
  const result=await fetchAllowedImage(file.download_url,env.ALLOWED_TRANSFER_HOSTS);
  const saved=await storePendingImage(env,owner,result.bytes,provenance,report);
@@ -162,6 +163,10 @@ export const TOOLS=[
  tool('import_media_file','Transfer an actual image file from ChatGPT. The image is quarantined until visual preview and account-user approval. For slides/PDF ChatGPT must FIRST extract a real PNG/JPEG/WebP crop and inspect it.',{...op,file:imageFileSchema,provenance:{type:'object',additionalProperties:true},visualReview:{type:'object',additionalProperties:true}},['operationId','file','provenance','visualReview'],{fileParam:true}),
  tool('import_media_url','Import an image only from an explicitly allowlisted HTTPS host, with reusable license and source metadata; review required before attaching.',{...op,url:schema,provenance:{type:'object',additionalProperties:true},visualReview:{type:'object',additionalProperties:true}},['operationId','url','provenance','visualReview']),
  tool('list_media','List current user media, including whether approved or pending.',{},[],{readOnly:true}),
+ tool('app_begin_media_upload','Start a user-selected image upload directly over MCP when ChatGPT host file transfer is unavailable.',{byteLength:{type:'integer',minimum:24,maximum:4000000},mimeType:schema,fileName:schema,provenance:{type:'object',additionalProperties:true}},['byteLength','mimeType','fileName','provenance'],{appOnly:true}),
+ tool('app_upload_media_chunk','Receive one ordered 96 KiB base64 image chunk from the embedded Noodl UI, not from model text.',{uploadId:schema,index:{type:'integer',minimum:0},base64:schema},['uploadId','index','base64'],{appOnly:true}),
+ tool('app_finish_media_upload','Assemble, validate and quarantine the complete user-uploaded image.',{uploadId:schema},['uploadId'],{appOnly:true}),
+ tool('app_get_media_chunk','Fallback: read a private image from R2 in safe sized chunks for embedded card/preview rendering.',{mediaId:schema,index:{type:'integer',minimum:0}},['mediaId','index'],{appOnly:true,readOnly:true}),
  tool('create_visual_candidate','Start card-specific visual validation for an already human-previewed image. Does not attach image.',{deckId:schema,cardId:schema,mediaId:schema,side:{type:'string',enum:['front','back']}},['deckId','cardId','mediaId']),
  tool('submit_source_check','Check A: record concrete slide/source observations. This is a model claim, not scientific certification.',{bindingId:schema,report:{type:'object',additionalProperties:true}},['bindingId','report']),
  tool('submit_visual_check','Check B: inspect the final stored image pixels and compare to exact card answer. Requires check A.',{bindingId:schema,report:{type:'object',additionalProperties:true}},['bindingId','report']),
@@ -177,7 +182,7 @@ export const TOOLS=[
 ];
 export async function callTool(name,env,owner,args={}){
  switch(name){
-  case 'get_capabilities':return {version:'0.3.0',content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'human_preview_required',preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
+  case 'get_capabilities':return {version:'0.4.0',content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'human_preview_required',mediaUploadFallback:'app_chunked_mcp',chunkBytes:98304,preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
   case 'list_decks':return {decks:await listDecks(env.DB,owner)};
   case 'get_deck':return await deckWithCards(env.DB,owner,required(args.deckId,'deckId'));
   case 'create_deck':return await createDeck(env,owner,args);
@@ -193,6 +198,11 @@ export async function callTool(name,env,owner,args={}){
   case 'import_media_file':return await importMediaFile(env,owner,args);
   case 'import_media_url':return await importMediaUrl(env,owner,args);
   case 'list_media':return {media:await listOwnerMedia(env,owner)};
+  case 'app_begin_media_upload':return await beginChunkedUpload(env,owner,args);
+  case 'app_upload_media_chunk':return await appendChunkedUpload(env,owner,args);
+  case 'app_finish_media_upload':return await finishChunkedUpload(env,owner,args);
+  case 'app_get_media_chunk':return await readOwnerMediaChunk(env,owner,required(args.mediaId,'mediaId'),args.index);
+  case 'app_purge_expired_media_uploads':return await purgeExpiredUploads(env,owner);
   case 'create_visual_candidate':return await createCandidate(env,owner,args);
   case 'submit_source_check':return await submitSourceCheck(env,owner,args);
   case 'submit_visual_check':return await submitVisualCheck(env,owner,args);
@@ -216,7 +226,7 @@ export async function handleMcp(req,env){
  const id=rpc.id??null;let result;
  switch(rpc.method){
   case 'server/discover':result={supportedVersions:['2026-07-28'],capabilities:{tools:{},resources:{}}};break;
-  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.3.0'}};break;
+  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.4.0'}};break;
   case 'notifications/initialized':return new Response(null,{status:202});
   case 'ping':result={};break;
   case 'tools/list':result={tools:TOOLS};break;

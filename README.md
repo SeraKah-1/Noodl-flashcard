@@ -13,7 +13,7 @@ The implementation is **dependency-free browser JavaScript and a Cloudflare Work
 - **Swipe left/right before the answer is revealed**, or after flipping. Hidden-card swipe is recorded as self-assessment, never verified correctness. Buttons and keyboard alternatives are provided.
 - **20-second monotonic timer**, local progressive clue reveals at **5/10/15 seconds**, no forced failure when time expires; tab hiding and answer reveal pause the timer.
 - Four post-reveal ratings, Undo, due review replay from immutable review events, local IndexedDB saving and cloud review outbox.
-- Local demo deck and local image upload. Uploaded media is decoded, previewed, checked against source/labels/relevance, explicitly approved, but two-check media attachment requires the connected v0.3 backend; the local browser cannot claim this verification.
+- Local demo deck and local image upload. Uploaded media is decoded, previewed, checked against source/labels/relevance, explicitly approved, but two-check media attachment requires the connected v0.4 backend; the local browser cannot claim this verification.
 - Production-oriented Worker MCP: deck create/read/append/edit/delete, due reviews, review/undo, media transfer, public-source import, restricted UI tools; D1 for records, private R2 for media.
 - Image import rejects SVG/HTML, wrong magic type, oversize bytes/pixels, private hosts, mismatched content type, and HTTP redirects. Remote sources require explicit approved host allowlists; website image sources additionally require a reusable license.
 - **Images cannot be referenced by cloud flashcards while `pending`**. Human approval requires an actually decoded preview and a one-time owner-bound server challenge. The review record includes image SHA-256 and source provenance.
@@ -57,6 +57,24 @@ python scripts/extract_source.py --input anatomy.pptx --page 7 --output slide7.p
 
 PPTX rendering additionally requires LibreOffice. Both commands create `*.png.review.json` with `status: pending_review` and SHA-256. **Do not mark a render scientifically correct without actually inspecting it**. Upload the resulting PNG to Noodl or give it to ChatGPT for `import_media_file`.
 
+## v0.4 repair: host-independent image transfer and readback
+
+The original live upload blocker was `A host-transferred file_id is required`. A `file_...` from chat or an extracted sandbox image is **not automatically transferred to the plugin**. The official file-input metadata (`_meta["openai/fileParams"]`) remains the preferred route when ChatGPT supports host transfer. It cannot be faked by passing the filename or chat file ID as an ordinary string.
+
+**New fallback for images selected directly from Noodl Settings:** the embedded UI opens the user's PNG/JPEG/WebP file and sends binary data via app-only MCP tools `app_begin_media_upload`, `app_upload_media_chunk`, and `app_finish_media_upload`. Each ordered request carries at most **96 KiB** of raw bytes encoded as Base64. D1 stages the data under the authenticated owner with a 30-minute expiry (at most eight active uploads per owner). On completion the Worker validates length, MIME/signature and dimensions, saves **private R2 media**, deletes staging rows, and returns a `pending` media ID. The file is not automatically approved or attached.
+
+**New readback fallback:** when the embedded browser cannot show private `/api/media/<id>` images, it calls `app_get_media_chunk` for owner-checked ranged R2 bytes, reassembles the *original bytes*, checks SHA-256 against the media record, and displays the verified result. Incomplete or mismatched images remain blocked from approval. A transient data URL is not persisted in the cloud or IndexedDB account cache.
+
+**This does NOT automatically extract a PDF received in the model chat to a host-transferred PNG.** Users can upload the six already extracted original slide PNGs in Settings (now supports selecting several images). ChatGPT-host transfer works only when the host authorizes and provides the required file object. This is a tested code-level workaround, not proof that the installed production plugin is updated.
+
+```sh
+npm run check
+npm test
+python scripts/smoke_chunk_upload.py  # Browser simulation of host without native file transfer
+```
+
+`migrations/0003_chunked_media_upload.sql` must be applied **after** `0001.sql` and `0002_visual_validation.sql`; for an existing v0.3 deployment, apply **only 0003** after a database backup. Restart/refresh the ChatGPT plugin tool registry and service worker. See [deployment](docs/DEPLOYMENT.md) for live release gates.
+
 ## Cloud / ChatGPT deployment: configuration work required
 
 This source is **not deployed**. Do not copy the old `.openai/hosting.json`: its project ID belongs to the source project. Create an independent Sites project with fresh D1 and R2 bindings, then explicitly connect the new `/mcp` endpoint to a new ChatGPT plugin/connector. See [Deployment & security](docs/DEPLOYMENT.md).
@@ -65,9 +83,9 @@ This source is **not deployed**. Do not copy the old `.openai/hosting.json`: its
 
 `ALLOWED_TRANSFER_HOSTS` and `ALLOWED_IMAGE_HOSTS` are also empty by default. Configure only hosts you actually trust and verify in the live host (not blanket internet access). Remote-image import will fail closed until configured. Specific ChatGPT file-download hosts must be observed and vetted from the connected deployment.
 
-## Implemented in v0.3 source: card-specific double-check + human approval
+## Implemented in v0.3+ source: card-specific double-check + human approval
 
-The companion [Visual Validation MCP Specification v1](docs/VISUAL_VALIDATION_MCP_SPEC_v1.md) and its [machine-readable JSON schema](docs/VISUAL_VALIDATION_MCP_SCHEMA_v1.json) define an **additional, proposed** source-check → final-pixel visual-check → per-card user-approval sequence. The v0.3 source implements the ordered check receipts and card-bound approval gate. The *currently connected live plugin* may still be v0.2; a source code update is not a deployment. The server still cannot independently prove scientific correctness, only enforce audit states, hashes, and explicit account-user approval. Do not describe the current application as double-verified or scientifically certified. The example data is fictional and does not establish medical correctness.
+The companion [Visual Validation MCP Specification v1](docs/VISUAL_VALIDATION_MCP_SPEC_v1.md) and its [machine-readable JSON schema](docs/VISUAL_VALIDATION_MCP_SCHEMA_v1.json) define an **additional, proposed** source-check → final-pixel visual-check → per-card user-approval sequence. The v0.3+ source implements the ordered check receipts and card-bound approval gate. The *currently connected live plugin* may still be v0.2; a source code update is not a deployment. The server still cannot independently prove scientific correctness, only enforce audit states, hashes, and explicit account-user approval. Do not describe the current application as double-verified or scientifically certified. The example data is fictional and does not establish medical correctness.
 
 ## Strict image workflow (not optional)
 
