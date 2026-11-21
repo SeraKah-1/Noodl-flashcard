@@ -1,0 +1,41 @@
+{
+  "description": "Example *claims* for a hypothetical source slide; not an independently verified medical image.",
+  "sourceCheck": {
+    "operationId": "source-check-20261121-01",
+    "deckId": "deck-1",
+    "cardId": "card-7",
+    "cardRevision": 4,
+    "cardContentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "mediaId": "media-12",
+    "mediaSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "provenance": {
+      "kind": "source_crop",
+      "origin": "lecture-07.pdf",
+      "sourceDocumentId": "document-1",
+      "sourcePage": 12,
+      "fullPageSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "crop": {"x": 0.22, "y": 0.35, "width": 0.48, "height": 0.30}
+    },
+    "observedLabels": ["HCl", "pepsinogen", "pepsin"],
+    "supportedClaim": "A diagram claims acid conditions activate pepsinogen.",
+    "evidenceNote": "Example observation only; cannot claim the actual slide was read.",
+    "sourceIntegrity": "unverified_host_context"
+  },
+  "visualCheck": {
+    "operationId": "visual-check-20261121-01",
+    "sourceCheckId": "check-A-1",
+    "deckId": "deck-1",
+    "cardId": "card-7",
+    "cardRevision": 4,
+    "cardContentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "mediaId": "media-12",
+    "mediaSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "inspectedView": "final_stored_image",
+    "observedLabels": ["HCl", "pepsinogen", "pepsin"],
+    "readability": "legible_zoom_only",
+    "supportedClaim": "Example diagram claims acidic conditions and conversion.",
+    "countercheck": "Would need to inspect original pixels for wrong arrow direction or omitted legend.",
+    "problems": ["This fixture is not a genuine visual examination"],
+    "recommendation": "unverifiable"
+  }
+}

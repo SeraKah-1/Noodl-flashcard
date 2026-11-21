@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://noodl.local/schemas/visual-validation-v1.json",
+  "title": "Noodl Flashcards — Visual Validation MCP v1 record contracts (proposed)",
+  "description": "A collection of reusable JSON schemas. These are future contracts, not currently enforced by the v0.2 Worker.",
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "normalizedCrop": {
+      "type": "object",
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      },
+      "required": ["x", "y", "width", "height"],
+      "additionalProperties": false,
+      "description": "Server must also ensure x+width <=1 and y+height <=1; JSON Schema bounds cannot express that arithmetic."
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "kind": { "enum": ["source_slide", "source_crop", "document_image", "supporting_web", "generated_illustration"] },
+        "origin": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "sourceDocumentId": { "$ref": "#/$defs/id" },
+        "sourcePage": { "type": "integer", "minimum": 1 },
+        "fullPageSha256": { "$ref": "#/$defs/sha256" },
+        "crop": { "$ref": "#/$defs/normalizedCrop" },
+        "landingPageUrl": { "type": "string", "format": "uri" },
+        "imageUrl": { "type": "string", "format": "uri" },
+        "publisher": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "licenseName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "licenseEvidenceUrl": { "type": "string", "format": "uri" },
+        "attribution": { "type": "string", "maxLength": 600 },
+        "generatedBrief": { "type": "string", "maxLength": 3000 }
+      },
+      "required": ["kind", "origin"],
+      "allOf": [
+        { "if": { "properties": { "kind": { "enum": ["source_slide", "source_crop", "document_image"] } }, "required": ["kind"] }, "then": { "required": ["sourceDocumentId", "sourcePage", "fullPageSha256"] } },
+        { "if": { "properties": { "kind": { "const": "source_crop" } }, "required": ["kind"] }, "then": { "required": ["crop"] } },
+        { "if": { "properties": { "kind": { "const": "supporting_web" } }, "required": ["kind"] }, "then": { "required": ["landingPageUrl", "imageUrl", "publisher", "licenseName", "licenseEvidenceUrl"] } }
+      ],
+      "additionalProperties": false
+    },
+    "sourceCheck": {
+      "type": "object",
+      "properties": {
+        "operationId": { "$ref": "#/$defs/id" },
+        "deckId": { "$ref": "#/$defs/id" },
+        "cardId": { "$ref": "#/$defs/id" },
+        "cardRevision": { "type": "integer", "minimum": 1 },
+        "cardContentSha256": { "$ref": "#/$defs/sha256" },
+        "mediaId": { "$ref": "#/$defs/id" },
+        "mediaSha256": { "$ref": "#/$defs/sha256" },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "observedLabels": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 120 }, "maxItems": 30 },
+        "supportedClaim": { "type": "string", "minLength": 12, "maxLength": 1000 },
+        "evidenceNote": { "type": "string", "minLength": 24, "maxLength": 2000 },
+        "sourceIntegrity": { "enum": ["confirmed", "unverified_host_context", "unverifiable"] }
+      },
+      "required": ["operationId", "deckId", "cardId", "cardRevision", "cardContentSha256", "mediaId", "mediaSha256", "provenance", "observedLabels", "supportedClaim", "evidenceNote", "sourceIntegrity"],
+      "additionalProperties": false
+    },
+    "visualCheck": {
+      "type": "object",
+      "properties": {
+        "operationId": { "$ref": "#/$defs/id" },
+        "sourceCheckId": { "$ref": "#/$defs/id" },
+        "deckId": { "$ref": "#/$defs/id" },
+        "cardId": { "$ref": "#/$defs/id" },
+        "cardRevision": { "type": "integer", "minimum": 1 },
+        "cardContentSha256": { "$ref": "#/$defs/sha256" },
+        "mediaId": { "$ref": "#/$defs/id" },
+        "mediaSha256": { "$ref": "#/$defs/sha256" },
+        "inspectedView": { "const": "final_stored_image" },
+        "observedLabels": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 120 }, "maxItems": 30 },
+        "readability": { "enum": ["legible_at_phone_width", "legible_zoom_only", "illegible"] },
+        "supportedClaim": { "type": "string", "minLength": 12, "maxLength": 1000 },
+        "countercheck": { "type": "string", "minLength": 20, "maxLength": 2000 },
+        "problems": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 500 }, "maxItems": 12 },
+        "recommendation": { "enum": ["pass", "rework", "reject", "unverifiable"] }
+      },
+      "required": ["operationId", "sourceCheckId", "deckId", "cardId", "cardRevision", "cardContentSha256", "mediaId", "mediaSha256", "inspectedView", "observedLabels", "readability", "supportedClaim", "countercheck", "problems", "recommendation"],
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "ownerId": { "$ref": "#/$defs/id" },
+        "deckId": { "$ref": "#/$defs/id" },
+        "cardId": { "$ref": "#/$defs/id" },
+        "cardRevision": { "type": "integer", "minimum": 1 },
+        "cardContentSha256": { "$ref": "#/$defs/sha256" },
+        "mediaId": { "$ref": "#/$defs/id" },
+        "mediaSha256": { "$ref": "#/$defs/sha256" },
+        "status": { "enum": ["candidate", "source_checked", "visual_checked", "awaiting_user_approval", "approved_for_card", "attached", "needs_rework", "rejected", "revoked"] },
+        "sourceCheckId": { "$ref": "#/$defs/id" },
+        "visualCheckId": { "$ref": "#/$defs/id" },
+        "userApprovalId": { "$ref": "#/$defs/id" }
+      },
+      "required": ["id", "ownerId", "deckId", "cardId", "cardRevision", "cardContentSha256", "mediaId", "mediaSha256", "status"],
+      "additionalProperties": false
+    },
+    "humanApproval": {
+      "type": "object",
+      "properties": {
+        "bindingId": { "$ref": "#/$defs/id" },
+        "challenge": { "type": "string", "minLength": 20, "maxLength": 200 },
+        "imageRendered": { "const": true },
+        "sourceMatches": { "const": true },
+        "labelsLegible": { "const": true },
+        "contentRelevant": { "const": true },
+        "originalPageShown": { "type": "boolean" },
+        "note": { "type": "string", "minLength": 24, "maxLength": 1000 }
+      },
+      "required": ["bindingId", "challenge", "imageRendered", "sourceMatches", "labelsLegible", "contentRelevant", "originalPageShown", "note"],
+      "additionalProperties": false
+    }
+  }
+}

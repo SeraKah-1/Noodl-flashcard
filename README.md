@@ -65,6 +65,10 @@ This source is **not deployed**. Do not copy the old `.openai/hosting.json`: its
 
 `ALLOWED_TRANSFER_HOSTS` and `ALLOWED_IMAGE_HOSTS` are also empty by default. Configure only hosts you actually trust and verify in the live host (not blanket internet access). Remote-image import will fail closed until configured. Specific ChatGPT file-download hosts must be observed and vetted from the connected deployment.
 
+## Planned v1: double-check visual evidence for every card
+
+The companion [Visual Validation MCP Specification v1](docs/VISUAL_VALIDATION_MCP_SPEC_v1.md) and its [machine-readable JSON schema](docs/VISUAL_VALIDATION_MCP_SCHEMA_v1.json) define an **additional, proposed** source-check → final-pixel visual-check → per-card user-approval sequence. They are **not implemented by this v0.2 prototype**. Today v0.2 has a real owner-bound user preview/approval gate for each asset; it does not store independent source and visual check receipts, nor bind image verification to a particular card answer/revision. Do not describe the current application as double-verified or scientifically certified. The example data is fictional and does not establish medical correctness.
+
 ## Strict image workflow (not optional)
 
 1. ChatGPT visually examines the real material or extracted crop; saves observed labels/shapes and actual page/slide in the `visualReview` and `provenance` fields. If ChatGPT cannot see the image, it must **not** claim that it inspected it.
