@@ -20,7 +20,7 @@ Example card:
 }
 ```
 
-`create_deck` and `append_cards` refuse referenced media unless R2 metadata is in `approved` state for the same owner. For `update_card`, read the deck first to get its current `expectedRevision`. Every distinct mutation needs a new `operationId`; only retry the exact same action with the same ID.
+`create_deck` and `append_cards` refuse **all direct image blocks**. Only `attach_visual_to_card` may add new images after per-card A/B reports and human approval. For `update_card`, read the deck first to get its current `expectedRevision`. Every distinct mutation needs a new `operationId`; only retry the exact same action with the same ID.
 
 ## PDF/PPTX image flow
 
@@ -28,7 +28,7 @@ ChatGPT must first inspect the actual document. It must determine the page/slide
 
 The MCP tool uses `_meta["openai/fileParams"]: ["file"]`, with `{file_id,download_url,mime_type?,file_name?}`. The model also sends source provenance and concrete visual observations. The server validates bytes and dimensions and saves a pending image. The user opens the UI preview and checks the actual source, label legibility and relevance. It is impossible to silently convert a model's `legible:true` claim to `approved` without the UI review challenge and user attestation.
 
-Only once the image status is `approved` should ChatGPT read a deck and call `update_card` or create a card with `{type:"image",assetId:"...",alt:"..."}` in front/back blocks. Read back the card to verify it has the intended asset ID.
+Asset-level approval is not enough. After it is `approved`, call `create_visual_candidate` for the exact card, then `submit_source_check` with observed source features, then `submit_visual_check` after opening the final stored image. The account user must approve the per-card preview, then `attach_visual_to_card` uses the current deck revision. Read back the card and audit receipt; NEVER use `update_card` to bypass this sequence.
 
 For a PDF/slide with no reliable image transfer, explicitly tell the user to upload the extracted PNG through Settings. Do not fabricate a file ID or an image URL.
 
@@ -61,3 +61,14 @@ Only use images with reusable rights: CC0, CC-BY, CC-BY-SA, public domain, or ex
 `open_deck` returns the deck ID and points to `ui://noodl-flashcards/workspace`. `app_snapshot` supplies the embedded UI with owned decks/reviews/media. `record_review` saves ratings 0..3 and `answerRevealed` status; a hidden-card swipe must use 0 or 3. `undo_review` tombstones a review event. SRS due scheduling is calculated from the event history; there is no fabricated accuracy score.
 
 App-only `app_begin_media_review` creates a time-limited preview challenge. It is not a visual classifier and should only be used after the actual media has decoded in the embedded panel; `app_approve_media` requires the challenge, human checkboxes, and detailed note. The non-embedded page uses a same-origin REST challenge and approval route.
+
+### v0.3 card-specific checks
+
+1. `create_visual_candidate({deckId,cardId,mediaId,side:"back"})` returns `bindingId` with media+card hash. It requires globally approved media but creates no card image block.
+2. `submit_source_check({bindingId,report:{sourcePage,observedLabels,supportedClaim,evidenceNote,result:"pass"}})` writes Check A. If the original PDF/slide has not been uploaded as verifiable bytes, source integrity remains `unverified_host_context`.
+3. `submit_visual_check({bindingId,report:{inspectedView:"final_stored_image",observedLabels,readability:"legible_at_phone_width",supportedClaim,countercheck,problems:[],recommendation:"pass"}})` writes Check B. Do not submit this report unless the **final stored image** was actually inspected.
+4. Open Settings > Pemeriksaan gambar per kartu. The user sees the image, card question/answer and both reports, then confirms all checks and types a review note. The app calls `app_begin_visual_approval` and `app_approve_card_visual` only after image decode and user interaction.
+5. The app calls `attach_visual_to_card({operationId,bindingId,expectedRevision})`, reads fresh deck and displays the image. Every distinct card requires a distinct binding even when using the same PNG asset.
+6. If content or media changes, old binding becomes stale and a fresh A/B/approval cycle is required.
+
+For internet media, `provenance.licenseEvidenceUrl` now must reference an HTTPS page with the reuse license claim. The actual image can reside on a different approved CDN host from the source landing page; Noodl still requires `ALLOWED_IMAGE_HOSTS`. A license claim is not an independent legal audit.

@@ -25,10 +25,20 @@ await cp('.openai/hosting.json', 'dist/.openai/hosting.json');
 await writeFile('dist/server/assets.js', `export default ${JSON.stringify(assets)};\n`);
 await writeFile('dist/server/index.js', await readFile('hosting/worker.js', 'utf8'));
 
-const migration = await readFile('migrations/0001.sql', 'utf8');
-await writeFile('dist/.openai/drizzle/0001.sql', migration.trimEnd().replace(/;\n(?=[\s\S]*\S)/g, ';\n--> statement-breakpoint\n') + '\n');
+// Keep applied journal entries stable so Sites advances the existing database.
+const migrations = [
+  {tag: '0001', when: 1795219200000},
+  {tag: '0002_visual_validation', when: 1795219200001},
+];
+for (const {tag} of migrations) {
+  const sql = await readFile(`migrations/${tag}.sql`, 'utf8');
+  const statements = sql.trimEnd().replace(/;\n(?=[\s\S]*\S)/g, ';\n--> statement-breakpoint\n');
+  await writeFile(`dist/.openai/drizzle/${tag}.sql`, statements + '\n');
+}
 await writeFile('dist/.openai/drizzle/meta/_journal.json', JSON.stringify({
   version: '7',
   dialect: 'sqlite',
-  entries: [{idx: 0, version: '6', when: 1795219200000, tag: '0001', breakpoints: true}],
+  entries: migrations.map(({tag, when}, idx) => ({
+    idx, version: '6', when, tag, breakpoints: true,
+  })),
 }) + '\n');

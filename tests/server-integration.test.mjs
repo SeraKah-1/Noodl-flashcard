@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {readFileSync} from 'node:fs';import {callTool} from '../worker/index.js';
 function memoryD1(){
- const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON;');sqlite.exec(readFileSync('migrations/0001.sql','utf8'));
+ const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON;');sqlite.exec(readFileSync('migrations/0001.sql','utf8'));sqlite.exec(readFileSync('migrations/0002_visual_validation.sql','utf8'));
  const prepare=sql=>({bind(...args){return {first:async()=>sqlite.prepare(sql).get(...args),all:async()=>({results:sqlite.prepare(sql).all(...args)}),run:async()=>sqlite.prepare(sql).run(...args),sql,args};}});
  return {prepare,async batch(statements){sqlite.exec('BEGIN');try{const output=statements.map(s=>sqlite.prepare(s.sql).run(...s.args));sqlite.exec('COMMIT');return output;}catch(e){sqlite.exec('ROLLBACK');throw e;}},sqlite};
 }
@@ -20,11 +20,8 @@ test('real SQLite: create, retry, revision-guarded append and account isolation'
  const due2=await callTool('list_due_cards',env,'alice',{});assert.equal(due2.due.length,2);
  await assert.rejects(callTool('undo_review',env,'bob',{operationId:'evil-undo',reviewId:'op-review-1'}),/Review not found/);
 });
-test('cannot create card referencing unapproved media in real DB',async()=>{
+test('direct image block is forbidden even if asset is already approved',async()=>{
  const DB=memoryD1(),env={DB};
- DB.sqlite.prepare(`INSERT INTO media(id,owner_id,storage_key,mime,width,height,bytes,hash,status,provenance_json,visual_review_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run('fake-image','alice','a','image/png',300,200,100,'hash','pending','{"kind":"manual","origin":"slide.png"}','{"observation":"pending"}','2026-11-21');
- await assert.rejects(callTool('create_deck',env,'alice',{operationId:'create-with-pending',title:'A',cards:[{...card(1),front:[{type:'image',assetId:'fake-image',alt:'Diagram of axon'}]}]}),/requires real preview/);
- DB.sqlite.prepare(`UPDATE media SET status='approved' WHERE id='fake-image'`).run();
- const result=await callTool('create_deck',env,'alice',{operationId:'create-with-pending',title:'A',cards:[{...card(1),front:[{type:'image',assetId:'fake-image',alt:'Diagram of axon'}]}]});assert.equal(result.cardCount,1);
- await assert.rejects(callTool('create_deck',env,'bob',{operationId:'cross-image',title:'B',cards:[{...card(1),front:[{type:'image',assetId:'fake-image',alt:'Diagram of axon'}]}]}),/Image not found/);
+ DB.sqlite.prepare(`INSERT INTO media(id,owner_id,storage_key,mime,width,height,bytes,hash,status,provenance_json,visual_review_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run('fake-image','alice','a','image/png',300,200,100,'hash','approved','{"kind":"manual","origin":"slide.png"}','{"observation":"pending"}','2026-11-21');
+ for(const owner of ['alice','bob'])await assert.rejects(callTool('create_deck',env,owner,{operationId:'direct-'+owner,title:'A',cards:[{...card(1),front:[{type:'image',assetId:'fake-image',alt:'Diagram'}]}]}),/Images must be added after card creation/);
 });

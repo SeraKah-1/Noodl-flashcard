@@ -37,3 +37,8 @@ body.in-player .flash-motion.enter-from-right {animation:card-enter-from-right .
 @media(prefers-reduced-motion:reduce){body.in-player .flash-motion.enter-from-left,body.in-player .flash-motion.enter-from-right {animation:none!important;}}
 html[data-reduced-motion="true"] body.in-player .flash-motion.enter-from-left,
 html[data-reduced-motion="true"] body.in-player .flash-motion.enter-from-right {animation:none!important;}
+
+/* v0.3: scrollable per-card visual approval on narrow screens. */
+.visual-review-modal .modal-panel{max-height:calc(100dvh - 24px);overscroll-behavior:contain;}
+.visual-review-modal .modal-footer{position:sticky;bottom:-16px;padding:12px 0 4px;background:#fcfaff;}
+@media(max-width:520px){.visual-review-modal{padding:9px}.visual-review-modal .modal-panel{border-radius:18px;max-height:calc(100dvh - 18px)}.visual-review-modal .modal-image{max-height:35dvh}.visual-review-modal .modal-footer .button{width:100%;white-space:normal}}

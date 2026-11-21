@@ -55,8 +55,15 @@ export function validateProvenance(input){
  const sourcePage=input.sourcePage===undefined?null:Number(input.sourcePage);
  assert(sourcePage===null||(Number.isInteger(sourcePage)&&sourcePage>=1&&sourcePage<=10000),'Invalid source page');
  const license=optTxt(input.license,'license',100);
- if(input.kind==='web')assert(['CC0','CC-BY','CC-BY-SA','PUBLIC_DOMAIN','EXPLICIT_PERMISSION'].includes(license),'Web media requires documented reusable license');
- return {kind:input.kind,origin,sourcePage,license,attribution:optTxt(input.attribution,'attribution',300),description:optTxt(input.description,'description',500)};
+ let licenseEvidenceUrl='',imageUrl='';
+ if(input.kind==='web'){
+  assert(['CC0','CC-BY','CC-BY-SA','PUBLIC_DOMAIN','EXPLICIT_PERMISSION'].includes(license),'Web media requires documented reusable license');
+  licenseEvidenceUrl=txt(input.licenseEvidenceUrl,'license evidence URL',600);
+  const source=new URL(origin),evidence=new URL(licenseEvidenceUrl);
+  assert(source.protocol==='https:'&&evidence.protocol==='https:','Web origin and license evidence must be HTTPS');
+  imageUrl=optTxt(input.imageUrl,'image URL',600);
+ }
+ return {kind:input.kind,origin,sourcePage,license,licenseEvidenceUrl,imageUrl,attribution:optTxt(input.attribution,'attribution',300),description:optTxt(input.description,'description',500)};
 }
 export function validateVisualReview(input){
  assert(input&&typeof input==='object','A visual review report is required');

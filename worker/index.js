@@ -1,6 +1,7 @@
 import {validateCard,validateDeckInput,validateReview,validateProvenance,validateVisualReview} from './validation.js';
-import {assertAllApprovedMedia,storePendingImage,fetchAllowedImage,getOwnerMedia,mediaSummary,listOwnerMedia,serveOwnerMedia,approveOwnerMedia,rejectOwnerMedia,issueMediaReviewChallenge,identifyImage} from './media.js';
+import {storePendingImage,fetchAllowedImage,getOwnerMedia,mediaSummary,listOwnerMedia,serveOwnerMedia,approveOwnerMedia,rejectOwnerMedia,issueMediaReviewChallenge,identifyImage} from './media.js';
 import {replayReviews} from '../shared/logic.js';
+import {createCandidate,submitSourceCheck,submitVisualCheck,listVisualCandidates,inspectVisualBinding,beginVisualApproval,approveCardVisual,attachCardVisual,assertNoUnapprovedImages,invalidateCardBindings,semanticHash} from './visualValidation.js';
 const uuid=()=>crypto.randomUUID(),now=()=>new Date().toISOString();
 function fail(message,status=400){const e=new Error(message);e.status=status;throw e;}
 function required(v,label,max=200){if(typeof v!=='string'||!v.trim()||v.length>max)fail(`Invalid ${label}`);return v.trim();}
@@ -37,7 +38,7 @@ async function createDeck(env,owner,args){
  const opId=required(args.operationId,'operationId',120);
  const prior=await opReceipt(env.DB,owner,opId);if(prior)return prior;
  const input=validateDeckInput(args),id=uuid(),cards=input.cards.map((c,i)=>({id:uuid(),position:i,...c})),time=now();
- await assertAllApprovedMedia(env,owner,cards);
+ for(const card of cards) await assertNoUnapprovedImages(env,owner,null,null,card);
  const result={deckId:id,revision:1,cardCount:cards.length,createdAt:time};
  return uniqueWrite(env,owner,opId,result,{build:r=>[
   env.DB.prepare(`INSERT INTO decks(id,owner_id,title,description,revision,created_at,updated_at) SELECT ?,?,?,?,1,?,? WHERE ${nonceGuard}`).bind(id,owner,input.title,input.description,time,time,owner,r.id,r.nonce),
@@ -50,7 +51,7 @@ async function appendCards(env,owner,args){
  const row=await ownedDeck(env.DB,owner,id);
  if(row.revision!==args.expectedRevision)fail('Revision changed',409);
  if(!Array.isArray(args.cards)||args.cards.length<1||args.cards.length>100)fail('Append requires 1..100 cards');
- const cards=args.cards.map(validateCard);await assertAllApprovedMedia(env,owner,cards);
+ const cards=args.cards.map(validateCard);for(const card of cards) await assertNoUnapprovedImages(env,owner,null,null,card);
  const oldCount=(await env.DB.prepare('SELECT COUNT(*) AS n FROM cards WHERE owner_id=? AND deck_id=?').bind(owner,id).first()).n;
  if(oldCount+cards.length>1000)fail('A deck can contain at most 1000 cards');
  const time=now(),newCards=cards.map((c,i)=>({id:uuid(),position:oldCount+i,...c}));
@@ -64,15 +65,17 @@ async function editCard(env,owner,args,remove=false){
  const id=required(args.deckId,'deckId'),cardId=required(args.cardId,'cardId'),opId=required(args.operationId,'operationId',120);
  const prev=await opReceipt(env.DB,owner,opId);if(prev)return prev;
  const row=await ownedDeck(env.DB,owner,id);if(row.revision!==args.expectedRevision)fail('Revision changed',409);
- const existing=await env.DB.prepare('SELECT id,position FROM cards WHERE id=? AND owner_id=? AND deck_id=?').bind(cardId,owner,id).first();if(!existing)fail('Card not found',404);
+ const existing=await env.DB.prepare('SELECT id,position,content_json FROM cards WHERE id=? AND owner_id=? AND deck_id=?').bind(cardId,owner,id).first();if(!existing)fail('Card not found',404);
  if(remove){const count=(await env.DB.prepare('SELECT COUNT(*) AS n FROM cards WHERE owner_id=? AND deck_id=?').bind(owner,id).first()).n;if(count<=1)fail('Deck must keep at least one card');}
- const card=remove?null:validateCard(args.card);if(card)await assertAllApprovedMedia(env,owner,[card]);
+ const card=remove?null:validateCard(args.card);if(card)await assertNoUnapprovedImages(env,owner,id,cardId,card);
  const time=now(),result={deckId:id,cardId,revision:row.revision+1,deleted:remove};
- return uniqueWrite(env,owner,opId,result,{condition:[`WHERE EXISTS(SELECT 1 FROM decks WHERE owner_id=? AND id=? AND revision=? AND deleted_at IS NULL)`,[owner,id,row.revision]],build:r=>[
+ const resultWrite=await uniqueWrite(env,owner,opId,result,{condition:[`WHERE EXISTS(SELECT 1 FROM decks WHERE owner_id=? AND id=? AND revision=? AND deleted_at IS NULL)`,[owner,id,row.revision]],build:r=>[
   env.DB.prepare(`UPDATE decks SET revision=revision+1,updated_at=? WHERE id=? AND owner_id=? AND revision=? AND ${nonceGuard}`).bind(time,id,owner,row.revision,owner,r.id,r.nonce),
   remove?env.DB.prepare(`DELETE FROM cards WHERE id=? AND owner_id=? AND deck_id=? AND ${nonceGuard}`).bind(cardId,owner,id,owner,r.id,r.nonce):
    env.DB.prepare(`UPDATE cards SET content_json=?,updated_at=? WHERE id=? AND owner_id=? AND deck_id=? AND ${nonceGuard}`).bind(JSON.stringify({id:cardId,position:existing.position,...card}),time,cardId,owner,id,owner,r.id,r.nonce)
  ]});
+ if(remove||!card||await semanticHash(JSON.parse(existing.content_json))!==await semanticHash(card)||JSON.stringify((JSON.parse(existing.content_json).front||[]).filter(x=>x.type==='image'))!==JSON.stringify(card.front.filter(x=>x.type==='image'))||JSON.stringify((JSON.parse(existing.content_json).back||[]).filter(x=>x.type==='image'))!==JSON.stringify(card.back.filter(x=>x.type==='image'))) await invalidateCardBindings(env,owner,id,cardId);
+ return resultWrite;
 }
 async function renameDeck(env,owner,args){
  const id=required(args.deckId,'deckId'),opId=required(args.operationId,'operationId',120);const prior=await opReceipt(env.DB,owner,opId);if(prior)return prior;
@@ -127,16 +130,16 @@ async function importMediaUrl(env,owner,args){
  const id=required(args.operationId,'operationId',120),prev=await opReceipt(env.DB,owner,id);if(prev)return prev;
  const provenance=validateProvenance(args.provenance),report=validateVisualReview(args.visualReview);
  if(provenance.kind!=='web')fail('External URLs require web provenance and permitted license');
- const url=required(args.url,'url',2000);if(new URL(url).hostname!==new URL(provenance.origin).hostname)fail('Provenance source host differs from image host');
+ const url=required(args.url,'url',2000);
  const result=await fetchAllowedImage(url,env.ALLOWED_IMAGE_HOSTS);
- const saved=await storePendingImage(env,owner,result.bytes,provenance,report);
+ const saved=await storePendingImage(env,owner,result.bytes,{...provenance,imageUrl:url},report);
  try{await env.DB.prepare('INSERT INTO operations(owner_id,id,result_json,nonce,created_at) VALUES(?,?,?,?,?)').bind(owner,id,JSON.stringify(saved),uuid(),now()).run();}catch(err){const old=await opReceipt(env.DB,owner,id);if(old)return old;throw err;}
  return saved;
 }
 async function snapshot(env,owner){
  const decks=await listDecks(env.DB,owner);
  const all=await Promise.all(decks.map(d=>deckWithCards(env.DB,owner,d.id)));
- return {ownerId:owner,decks:all,reviews:await reviewHistory(env.DB,owner),media:await listOwnerMedia(env,owner)};
+ return {ownerId:owner,decks:all,reviews:await reviewHistory(env.DB,owner),media:await listOwnerMedia(env,owner),visualBindings:await listVisualCandidates(env,owner)};
 }
 const schema={type:'string'},str=(description)=>({...schema,description});
 const tool=(name,description,properties={},required=[],options={})=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false},annotations:{readOnlyHint:!!options.readOnly,destructiveHint:!!options.destructive,idempotentHint:true},_meta:{ui:{visibility:options.appOnly?['app']:['model','app'],...(options.opens?{resourceUri:'ui://noodl-flashcards/workspace'}:{})},...(options.fileParam?{'openai/fileParams':['file']}:{})}});
@@ -146,7 +149,7 @@ export const TOOLS=[
  tool('get_capabilities','List supported flashcard creation, timer, clues, storage, image-review and media limits.',{},[],{readOnly:true}),
  tool('list_decks','List private flashcard decks for the current ChatGPT account.',{},[],{readOnly:true}),
  tool('get_deck','Read full flashcard deck including all cards and source references.',{deckId:schema},['deckId'],{readOnly:true}),
- tool('create_deck','Create a deck with 1..100 flashcards. ChatGPT writes three progressive clues for every card. Images must already be APPROVED.',{...op,title:schema,description:schema,cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','title','cards'],{opens:true}),
+ tool('create_deck','Create a deck with 1..100 flashcards. ChatGPT writes three progressive clues for every card. Add images to saved cards via the card-specific visual validation workflow.',{...op,title:schema,description:schema,cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','title','cards'],{opens:true}),
  tool('append_cards','Append 1..100 validated cards; the current deck revision is required.',{...op,...deckFields,cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','deckId','expectedRevision','cards']),
  tool('update_card','Replace a card using the latest deck revision.',{...op,...deckFields,cardId:schema,card:{type:'object',additionalProperties:true}},['operationId','deckId','expectedRevision','cardId','card'],{destructive:true}),
  tool('delete_card','Delete a card. A deck must keep at least one card.',{...op,...deckFields,cardId:schema},['operationId','deckId','expectedRevision','cardId'],{destructive:true}),
@@ -159,6 +162,14 @@ export const TOOLS=[
  tool('import_media_file','Transfer an actual image file from ChatGPT. The image is quarantined until visual preview and account-user approval. For slides/PDF ChatGPT must FIRST extract a real PNG/JPEG/WebP crop and inspect it.',{...op,file:imageFileSchema,provenance:{type:'object',additionalProperties:true},visualReview:{type:'object',additionalProperties:true}},['operationId','file','provenance','visualReview'],{fileParam:true}),
  tool('import_media_url','Import an image only from an explicitly allowlisted HTTPS host, with reusable license and source metadata; review required before attaching.',{...op,url:schema,provenance:{type:'object',additionalProperties:true},visualReview:{type:'object',additionalProperties:true}},['operationId','url','provenance','visualReview']),
  tool('list_media','List current user media, including whether approved or pending.',{},[],{readOnly:true}),
+ tool('create_visual_candidate','Start card-specific visual validation for an already human-previewed image. Does not attach image.',{deckId:schema,cardId:schema,mediaId:schema,side:{type:'string',enum:['front','back']}},['deckId','cardId','mediaId']),
+ tool('submit_source_check','Check A: record concrete slide/source observations. This is a model claim, not scientific certification.',{bindingId:schema,report:{type:'object',additionalProperties:true}},['bindingId','report']),
+ tool('submit_visual_check','Check B: inspect the final stored image pixels and compare to exact card answer. Requires check A.',{bindingId:schema,report:{type:'object',additionalProperties:true}},['bindingId','report']),
+ tool('list_visual_candidates','List card-specific visual validation states for this account.',{},[],{readOnly:true}),
+ tool('get_card_visual_audit','Read both check reports and the card-specific approval state.',{bindingId:schema},['bindingId'],{readOnly:true}),
+ tool('attach_visual_to_card','Attach a human-approved, double-checked visual to one card with revision protection. No bypass via update_card.',{...op,bindingId:schema,expectedRevision:{type:'integer',minimum:1}},['operationId','bindingId','expectedRevision']),
+ tool('app_begin_visual_approval','Open short-lived challenge for human inspection of this exact image and card.',{bindingId:schema},['bindingId'],{appOnly:true}),
+ tool('app_approve_card_visual','Approve the image for exactly this card only after inspecting actual preview and both reports.',{bindingId:schema,challenge:schema,imageRendered:{type:'boolean'},sourceMatches:{type:'boolean'},labelsLegible:{type:'boolean'},contentRelevant:{type:'boolean'},note:schema},['bindingId','challenge','imageRendered','sourceMatches','labelsLegible','contentRelevant','note'],{appOnly:true}),
  tool('app_snapshot','Embedded UI reads private decks and review events.',{},[],{readOnly:true,appOnly:true}),
  tool('app_begin_media_review','Get short-lived preview challenge for a pending image; only call from the visible media preview after image.decode().',{mediaId:schema},['mediaId'],{appOnly:true,readOnly:true}),
  tool('app_approve_media','Embedded UI action AFTER full-size image loads and all human visual checks are checked.',{mediaId:schema,attestation:{type:'object',additionalProperties:true}},['mediaId','attestation'],{appOnly:true}),
@@ -166,7 +177,7 @@ export const TOOLS=[
 ];
 export async function callTool(name,env,owner,args={}){
  switch(name){
-  case 'get_capabilities':return {version:'0.2.0',content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'human_preview_required',preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
+  case 'get_capabilities':return {version:'0.3.0',content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'human_preview_required',preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
   case 'list_decks':return {decks:await listDecks(env.DB,owner)};
   case 'get_deck':return await deckWithCards(env.DB,owner,required(args.deckId,'deckId'));
   case 'create_deck':return await createDeck(env,owner,args);
@@ -182,6 +193,14 @@ export async function callTool(name,env,owner,args={}){
   case 'import_media_file':return await importMediaFile(env,owner,args);
   case 'import_media_url':return await importMediaUrl(env,owner,args);
   case 'list_media':return {media:await listOwnerMedia(env,owner)};
+  case 'create_visual_candidate':return await createCandidate(env,owner,args);
+  case 'submit_source_check':return await submitSourceCheck(env,owner,args);
+  case 'submit_visual_check':return await submitVisualCheck(env,owner,args);
+  case 'list_visual_candidates':return {visualBindings:await listVisualCandidates(env,owner)};
+  case 'get_card_visual_audit':return await inspectVisualBinding(env,owner,required(args.bindingId,'bindingId'));
+  case 'attach_visual_to_card':return await attachCardVisual(env,owner,args);
+  case 'app_begin_visual_approval':return await beginVisualApproval(env,owner,required(args.bindingId,'bindingId'));
+  case 'app_approve_card_visual':return await approveCardVisual(env,owner,args);
   case 'app_snapshot':return await snapshot(env,owner);
   case 'app_begin_media_review':return await issueMediaReviewChallenge(env,owner,args.mediaId);
   case 'app_approve_media':return await approveOwnerMedia(env,owner,args.mediaId,args.attestation);
@@ -197,7 +216,7 @@ export async function handleMcp(req,env){
  const id=rpc.id??null;let result;
  switch(rpc.method){
   case 'server/discover':result={supportedVersions:['2026-07-28'],capabilities:{tools:{},resources:{}}};break;
-  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.2.0'}};break;
+  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.3.0'}};break;
   case 'notifications/initialized':return new Response(null,{status:202});
   case 'ping':result={};break;
   case 'tools/list':result={tools:TOOLS};break;
@@ -227,6 +246,16 @@ export async function handleApi(req,env){
  }
  if(req.method==='GET'&&path==='/api/snapshot')return replyJson(await snapshot(env,owner));
  if(req.method==='GET'&&path==='/api/media')return replyJson({media:await listOwnerMedia(env,owner)});
+  if(req.method==='GET'&&path==='/api/visual')return replyJson({visualBindings:await listVisualCandidates(env,owner)});
+  if(req.method==='POST'&&path==='/api/visual/candidates')return replyJson(await createCandidate(env,owner,await parseBody(req)),201);
+  const visualPath=path.match(/^\/api\/visual\/([a-f0-9-]{36})(?:\/(audit|challenge|approve|attach))?$/i);
+  if(visualPath){
+   const bindingId=visualPath[1],verb=visualPath[2];
+   if(req.method==='GET'&&verb==='audit')return replyJson(await inspectVisualBinding(env,owner,bindingId));
+   if(req.method==='GET'&&verb==='challenge')return replyJson(await beginVisualApproval(env,owner,bindingId));
+   if(req.method==='POST'&&verb==='approve')return replyJson(await approveCardVisual(env,owner,{...await parseBody(req),bindingId}));
+   if(req.method==='POST'&&verb==='attach')return replyJson(await attachCardVisual(env,owner,{...await parseBody(req),bindingId}));
+  }
  const m=path.match(/^\/api\/media\/([a-f0-9-]{36})(?:\/(approve|reject|challenge))?$/i);
  if(m){
   if(req.method==='GET'&&!m[2])return serveOwnerMedia(env,owner,m[1]);

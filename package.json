@@ -1,6 +1,6 @@
 {
   "name": "noodl-flashcards",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Flashcards, timed clues, verified media and ChatGPT MCP — without an AI provider backend.",
@@ -8,7 +8,7 @@
     "build": "node scripts/build.mjs",
     "dev": "node scripts/dev.mjs",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check public/app.js && node --check public/sw.js && node --check worker/index.js && node --check worker/media.js && node --check worker/validation.js && node --check shared/logic.js"
+    "check": "node --check public/app.js && node --check public/sw.js && node --check worker/index.js && node --check worker/media.js && node --check worker/validation.js && node --check worker/visualValidation.js && node --check shared/logic.js"
   },
   "engines": { "node": ">=22" }
 }
