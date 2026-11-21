@@ -1,0 +1,2 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
+test('source extractor renders full slide composition instead of trusting raw media assets',()=>{const s=readFileSync('scripts/extract_source.py','utf8');assert(s.includes('libreoffice'));assert(s.includes('get_pixmap'));assert(s.includes('pending_review'));assert(s.includes('checkedVisually'));});

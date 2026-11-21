@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';
+test('all four destinations and image review controls are present',async()=>{const html=await readFile('public/index.html','utf8'),app=await readFile('public/app.js','utf8');for(const s of ['home','library','review','settings'])assert(html.includes(`data-nav="${s}"`));for(const s of ['sourceMatches','labelsLegible','contentRelevant','imageRendered'])assert(app.includes(s));});
+test('no API provider key or prompt generator UI',async()=>{const app=await readFile('public/app.js','utf8');assert(!/apiKey|modelSelector|generateQuestions/.test(app));});
