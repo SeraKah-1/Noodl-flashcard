@@ -9,3 +9,31 @@ html[data-reduced-motion="true"] *,html[data-reduced-motion="true"] *:before,htm
 html[data-reduced-motion="true"] .flash-scene{transition:none!important}html[data-reduced-motion="true"] .flash-scene.flipped{transform:none!important}html[data-reduced-motion="true"] .flash-scene.flipped .flash-face.front{display:none}html[data-reduced-motion="true"] .flash-scene .flash-face.back{display:none;transform:none}html[data-reduced-motion="true"] .flash-scene.flipped .flash-face.back{display:flex}
 
 body.in-player .dock{display:none}body.in-player .shell{padding-bottom:38px}@media(max-width:520px){body.in-player .flash-stage{min-height:clamp(300px,41dvh,430px)}body.in-player .timer-line{margin-top:7px;margin-bottom:7px}}
+
+/* Seamless whole-card swipes: do not let the browser drag images or capture text
+   selections while a horizontal gesture is in progress. Vertical scroll stays native. */
+body.in-player .flash-stage,
+body.in-player .flash-motion,
+body.in-player .flash-scene,
+body.in-player .flash-face,
+body.in-player .face-content {touch-action:pan-y;}
+body.in-player .flash-stage {overscroll-behavior-x:contain;}
+body.in-player .flash-motion {cursor:grab;transform-origin:50% 55%;
+  transition:transform .3s cubic-bezier(.2,.9,.25,1.12),opacity .23s ease;}
+body.in-player .flash-motion.is-dragging {transition:none!important;cursor:grabbing;}
+body.in-player .flash-motion.swipe-exiting {transition:transform .205s cubic-bezier(.24,.76,.35,1),opacity .205s ease;pointer-events:none;}
+body.in-player .flash-stage img {user-select:none;-webkit-user-select:none;-webkit-user-drag:none;}
+body.in-player .flash-motion.is-dragging,
+body.in-player .flash-motion.is-dragging * {user-select:none;-webkit-user-select:none;}
+body.in-player .flash-stage .swipe-sticker {transition:opacity .08s linear;}
+@media(prefers-reduced-motion:reduce){body.in-player .flash-motion{transition:none!important;}}
+html[data-reduced-motion="true"] body.in-player .flash-motion {transition:none!important;}
+
+/* Incoming card follows the outgoing direction with a subtle, short slide. */
+@keyframes card-enter-from-left {from{opacity:.78;transform:translate3d(-26px,0,0) scale(.986);}to{opacity:1;transform:translate3d(0,0,0) scale(1);}}
+@keyframes card-enter-from-right {from{opacity:.78;transform:translate3d(26px,0,0) scale(.986);}to{opacity:1;transform:translate3d(0,0,0) scale(1);}}
+body.in-player .flash-motion.enter-from-left {animation:card-enter-from-left .22s cubic-bezier(.2,.85,.24,1) both;}
+body.in-player .flash-motion.enter-from-right {animation:card-enter-from-right .22s cubic-bezier(.2,.85,.24,1) both;}
+@media(prefers-reduced-motion:reduce){body.in-player .flash-motion.enter-from-left,body.in-player .flash-motion.enter-from-right {animation:none!important;}}
+html[data-reduced-motion="true"] body.in-player .flash-motion.enter-from-left,
+html[data-reduced-motion="true"] body.in-player .flash-motion.enter-from-right {animation:none!important;}

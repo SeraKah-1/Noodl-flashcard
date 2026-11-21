@@ -36,4 +36,11 @@
 - PNG upload/preview/approve/attach flow: PASS Chromium DOM smoke with a **real decoded PNG** fixture.
 - Real PDF and PPTX composition-to-PNG helper: PASS on generated fixtures; rendered images manually inspected.
 - Full live browser navigation test: Not possible in authoring environment because Chromium navigation to localhost was blocked by administrator. The DOM smoke uses `set_content` to test JS/CSS instead.
-- Live MCP host, D1/R2 and production publishing: NOT TESTED.
+- This baseline test matrix predates the first hosted release. Live MCP tool discovery and D1 deck listing were verified on v0.1.
+
+## Follow-up — Smooth entire-card swipe (v0.2.0)
+
+- Pointer gestures are handled on `#flashStage` (whole card), not the old inner motion child; horizontal capture keeps motion active outside the component, including text/image center. Child image capture transfer is distinguished from actual pointer cancellation.
+- Drag follows the finger via `requestAnimationFrame` + `translate3d`, supports reversal, and exits smoothly before the next card enters. Tap remains flip, image tap remains zoom, and scrolling long content vertically remains native.
+- Desktop and touch interactions verified in `scripts/smoke_gestures.py` via Chromium (touch uses CDP `Input.dispatchTouchEvent`); passed left/right center swipes, image swipe/zoom, short bounce, reverse drag, after-flip swipe, vertical scroll, and Undo. Existing `scripts/smoke_browser.py` also passed.
+- Touch testing used Chromium's emulated touchscreen, **not physical Android/iOS hardware**.

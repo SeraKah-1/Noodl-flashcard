@@ -95,9 +95,9 @@ function stopSession(){if(state.session?.clock)state.session.clock.pause(clockMs
 function playerCard(){const s=state.session;return s?.cards[s.index]}
 function renderPlayer(){const s=state.session;if(!s)return navigate('review');const card=playerCard();
  if(!card){main.innerHTML=`<div class="screen narrow" style="text-align:center;padding-top:80px"><div class="hero-mascot">(≧▽≦)</div><h1 class="page-title">Sesi selesai!</h1><p class="page-intro">${s.cards.length} kartu sudah kamu lewati. Rating tersimpan tanpa mengarang skor benar/salah.</p><div class="hero-actions" style="justify-content:center"><button class="button primary" data-nav="review">Ke Review</button><button class="button secondary" data-nav="library">My decks</button></div></div>`;return;}
- const n=s.index+1,len=s.cards.length,revealed=s.flipped,clues=s.cluesSeen.map(t=>card.clues?.find(c=>c.atSecond===t)).filter(Boolean);
- main.innerHTML=`<div class="screen narrow"><div class="session-head"><div><button class="button ghost" data-nav="review">← Kembali</button></div><div style="text-align:center"><h2 class="session-title">${safe(s.deck.title)}</h2><p class="session-sub">FLASHCARDS · ${n} / ${len}</p></div><div><button class="button ghost" id="playerUndo" ${state.prevReview?'':'disabled'}>↶ Undo</button></div></div><div class="progress-rail"><div class="progress-bar" style="width:${(s.index/len)*100}%"></div></div><div class="timer-line"><span>✦ ${revealed?'Jawaban terbuka': 'Ingat dulu, baru balik'}</span><span id="timerPill" class="timer-pill">${state.settings.timer?'20s':'Santai'}</span></div><div class="flash-stage" id="flashStage"><div class="flash-behind"></div><div class="swipe-sticker left" id="stickerLeft">BELUM TAHU</div><div class="swipe-sticker right" id="stickerRight">TAHU</div><div class="flash-motion" id="flashMotion"><div class="flash-scene ${revealed?'flipped':''}" id="flashScene"><div class="flash-face front"><div class="face-top"><span>PERTANYAAN</span><span>NOODL ◈</span></div><div class="face-content">${blocksHtml(card.front)}</div><div class="face-footer">Ketuk untuk melihat jawaban · swipe kapan saja</div></div><div class="flash-face back"><div class="face-top"><span>JAWABAN</span><span>FLASHCARD ✦</span></div><div class="face-content answer">${blocksHtml(card.back)}</div><div class="face-footer">Nilai sesuai ingatanmu, bukan tebakanmu</div></div></div></div></div><div class="clue-card" id="clueBox"><span class="info-icon">✦</span><div id="clueText">${revealed?'Jawaban dibuka. Timer dijeda.':'Clue pertama muncul pada detik ke-5.'}</div><button class="reveal-clues" id="showClues" ${clues.length?'':'disabled'}>Clue (${clues.length})</button></div><div id="ratingControls">${revealed?renderRatings():renderSwipeGuide()}</div><div class="player-controls"><button class="button secondary" id="playerFlip">${revealed?'↶ Lihat depan':'↻ Balik kartu'}</button><button class="button ghost" id="playerSkip">Lewati →</button></div><p class="session-meta">Swipe kiri / kanan kapan pun · Space: balik · 1–4: rating setelah flip · Z: undo. ${state.backend==='local'?'Data tersimpan di browser.':'Penyimpanan lokal dahulu, sinkronisasi kemudian.'}</p></div>`;
- bindGestures();bindPlayerButtons();tick();
+ const n=s.index+1,len=s.cards.length,revealed=s.flipped,enterClass=s.enterDirection>0?'enter-from-left':s.enterDirection<0?'enter-from-right':'',clues=s.cluesSeen.map(t=>card.clues?.find(c=>c.atSecond===t)).filter(Boolean);
+ main.innerHTML=`<div class="screen narrow"><div class="session-head"><div><button class="button ghost" data-nav="review">← Kembali</button></div><div style="text-align:center"><h2 class="session-title">${safe(s.deck.title)}</h2><p class="session-sub">FLASHCARDS · ${n} / ${len}</p></div><div><button class="button ghost" id="playerUndo" ${state.prevReview?'':'disabled'}>↶ Undo</button></div></div><div class="progress-rail"><div class="progress-bar" style="width:${(s.index/len)*100}%"></div></div><div class="timer-line"><span>✦ ${revealed?'Jawaban terbuka': 'Ingat dulu, baru balik'}</span><span id="timerPill" class="timer-pill">${state.settings.timer?'20s':'Santai'}</span></div><div class="flash-stage" id="flashStage" aria-label="Kartu flashcard; geser kiri atau kanan dari area mana saja"><div class="flash-behind"></div><div class="swipe-sticker left" id="stickerLeft">BELUM TAHU</div><div class="swipe-sticker right" id="stickerRight">TAHU</div><div class="flash-motion ${enterClass}" id="flashMotion"><div class="flash-scene ${revealed?'flipped':''}" id="flashScene"><div class="flash-face front"><div class="face-top"><span>PERTANYAAN</span><span>NOODL ◈</span></div><div class="face-content">${blocksHtml(card.front)}</div><div class="face-footer">Ketuk untuk balik · geser dari area mana saja</div></div><div class="flash-face back"><div class="face-top"><span>JAWABAN</span><span>FLASHCARD ✦</span></div><div class="face-content answer">${blocksHtml(card.back)}</div><div class="face-footer">Nilai sesuai ingatanmu, bukan tebakanmu</div></div></div></div></div><div class="clue-card" id="clueBox"><span class="info-icon">✦</span><div id="clueText">${revealed?'Jawaban dibuka. Timer dijeda.':'Clue pertama muncul pada detik ke-5.'}</div><button class="reveal-clues" id="showClues" ${clues.length?'':'disabled'}>Clue (${clues.length})</button></div><div id="ratingControls">${revealed?renderRatings():renderSwipeGuide()}</div><div class="player-controls"><button class="button secondary" id="playerFlip">${revealed?'↶ Lihat depan':'↻ Balik kartu'}</button><button class="button ghost" id="playerSkip">Lewati →</button></div><p class="session-meta">Swipe kiri / kanan termasuk di tengah kartu · Space: balik · 1–4: rating setelah flip · Z: undo. ${state.backend==='local'?'Data tersimpan di browser.':'Penyimpanan lokal dahulu, sinkronisasi kemudian.'}</p></div>`;
+ s.enterDirection=0;bindGestures();bindPlayerButtons();tick();
 }
 function renderRatings(){return `<div class="rating-grid">${[['Lupa','0','forget','↶'],['Sulit','1','','◌'],['Bagus','2','','✓'],['Mudah','3','easy','✦']].map(([text,rating,cls,icon])=>`<button class="rating ${cls}" data-rating="${rating}"><span>${icon}</span>${text}<small>${Number(rating)+1} / ${rating==='0'?'←':rating==='3'?'→':'tap'}</small></button>`).join('')}</div>`}
 function renderSwipeGuide(){return `<div class="swipe-guide"><span class="left">← Belum tahu</span><span>Swipe tanpa harus membalik</span><span class="right">Sudah tahu →</span></div>`}
@@ -124,37 +124,124 @@ function bindPlayerButtons(){
   toast(list.join(' · '));
  });
 }
-function bindGestures(){const motion=$('#flashMotion');let start=null,moved=false,ignore=false;
- motion.addEventListener('pointerdown',e=>{
-  if(e.target.closest('button,a,iframe,input,textarea,select')||e.target.closest('[data-zoom]')||state.session?.processing)return;
-  start={x:e.clientX,y:e.clientY,at:performance.now()};ignore=false;moved=false;
- });
- motion.addEventListener('pointermove',e=>{
-  if(!start)return;const dx=e.clientX-start.x,dy=e.clientY-start.y;
-  if(Math.abs(dy)>Math.abs(dx)*1.2&&Math.abs(dy)>14){ignore=true;return;}
-  if(!ignore&&Math.abs(dx)>10){moved=true;motion.style.transform=`translateX(${Math.max(-135,Math.min(135,dx))}px) rotate(${dx/20}deg)`;
-   const l=$('#stickerLeft'),r=$('#stickerRight');l.style.opacity=String(Math.max(0,Math.min(1,-dx/95)));r.style.opacity=String(Math.max(0,Math.min(1,dx/95)));}
- });
- const end=e=>{
-  if(!start)return;const dx=e.clientX-start.x,dy=e.clientY-start.y,dt=Math.max(16,performance.now()-start.at),velocity=dx/dt*1000;
-  start=null;motion.style.transform='';$('#stickerLeft').style.opacity='0';$('#stickerRight').style.opacity='0';
-  if(!ignore&&moved){const rating=dragRating(dx,dy,velocity);if(rating!==null)void rate(rating);}
-  else if(!ignore&&!moved)flip();
-  // Swiped card cannot trigger a second click flip.
-  ignore=false;moved=false;
+/**
+ * A single Pointer Events surface covers the entire card, including its scrollable
+ * central content and image. Capture keeps the gesture alive after leaving the card;
+ * the pan-y touch-action keeps vertical scrolling native on mobile. We only steal a
+ * gesture after it is unambiguously horizontal, so vertical text scrolling still works.
+ */
+function bindGestures(){
+ const stage=$('#flashStage'),motion=$('#flashMotion'),left=$('#stickerLeft'),right=$('#stickerRight');
+ if(!stage||!motion)return;
+ let pointer=null,paintFrame=0,suppressClickUntil=0;
+ const reduced=()=>state.settings.reducedMotion||window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+ const paint=()=>{
+  paintFrame=0;
+  if(!pointer||pointer.axis!=='horizontal')return;
+  const x=pointer.dx, width=Math.max(260,stage.clientWidth);
+  const shown=Math.max(-width*.67,Math.min(width*.67,x));
+  const ratio=Math.min(1,Math.abs(x)/Math.max(92,width*.22));
+  motion.style.transform=`translate3d(${shown}px,0,0) rotate(${reduced()?0:shown/width*12}deg)`;
+  motion.style.opacity=String(1-ratio*.16);
+  left.style.opacity=String(x<0?ratio:0);
+  right.style.opacity=String(x>0?ratio:0);
  };
- motion.addEventListener('pointerup',end);motion.addEventListener('pointercancel',()=>{start=null;motion.style.transform='';});
+ const reset=()=>{
+  if(paintFrame){cancelAnimationFrame(paintFrame);paintFrame=0;}
+  motion.classList.remove('is-dragging');
+  motion.style.transform='';motion.style.opacity='';
+  left.style.opacity='0';right.style.opacity='0';
+ };
+ const finishCapture=id=>{try{if(stage.hasPointerCapture(id))stage.releasePointerCapture(id);}catch{}};
+ stage.addEventListener('pointerdown',e=>{
+  if(pointer||state.session?.processing||!e.isPrimary||(e.pointerType==='mouse'&&e.button!==0))return;
+  // Real controls remain clickable. Images are deliberately NOT excluded: users
+  // can swipe over their center, or simply tap to open the full-size preview.
+  if(e.target instanceof Element&&e.target.closest('button,a,iframe,input,textarea,select,[contenteditable="true"]'))return;
+  pointer={id:e.pointerId,x:e.clientX,y:e.clientY,at:performance.now(),dx:0,dy:0,axis:'pending',
+   zoomTarget:e.target instanceof Element&&!!e.target.closest('[data-zoom]'),samples:[{x:e.clientX,t:performance.now()}]};
+  // Preserve native click on images; capture only if that touch becomes a drag.
+  if(!pointer.zoomTarget)try{stage.setPointerCapture(e.pointerId);}catch{}
+ });
+ stage.addEventListener('pointermove',e=>{
+  if(!pointer||pointer.id!==e.pointerId)return;
+  const dx=e.clientX-pointer.x,dy=e.clientY-pointer.y;
+  if(pointer.axis==='pending'){
+   if(Math.abs(dy)>10&&Math.abs(dy)>Math.abs(dx)*1.12){pointer.axis='vertical';return;}
+   if(Math.abs(dx)<8||Math.abs(dx)<=Math.abs(dy)*1.1)return;
+   pointer.axis='horizontal';motion.classList.add('is-dragging');
+   if(pointer.zoomTarget)try{stage.setPointerCapture(e.pointerId);}catch{}
+  }
+  if(pointer.axis!=='horizontal')return;
+  pointer.dx=dx;pointer.dy=dy;
+  const now=performance.now();pointer.samples.push({x:e.clientX,t:now});
+  pointer.samples=pointer.samples.filter(p=>now-p.t<=100).slice(-8);
+  if(e.cancelable)e.preventDefault();
+  if(!paintFrame)paintFrame=requestAnimationFrame(paint);
+ });
+ const done=(e,cancelled)=>{
+  if(!pointer||pointer.id!==e.pointerId)return;
+  const p=pointer;
+  const dx=e.clientX-p.x,dy=e.clientY-p.y;
+  pointer=null;
+  finishCapture(p.id);
+  if(p.axis==='horizontal'){
+   // Sampling recent movement lets a deliberate short flick commit, while a
+   // long drag works even when released slowly after moving left/right/back.
+   const recent=p.samples.find(s=>s.t>=performance.now()-100)||p.samples[0];
+   const dt=Math.max(16,performance.now()-recent.t);
+   const velocity=(e.clientX-recent.x)/dt*1000;
+   const rating=cancelled?null:dragRating(dx,dy,velocity);
+   // Native click may follow a touch/pointer release, especially over an image.
+   suppressClickUntil=performance.now()+350;
+   if(rating!==null){
+    if(paintFrame){cancelAnimationFrame(paintFrame);paintFrame=0;}
+    p.dx=dx;p.dy=dy;pointer=p;paint();pointer=null;
+    motion.classList.remove('is-dragging');
+    void rate(rating,{swipeDirection:Math.sign(dx)});
+   }else reset();
+  }else if(!cancelled&&p.axis==='pending'&&!p.zoomTarget){
+   reset();flip();
+  }else reset();
+ };
+ stage.addEventListener('pointerup',e=>done(e,false));
+ stage.addEventListener('pointercancel',e=>done(e,true));
+ stage.addEventListener('lostpointercapture',e=>{
+  // The old child (e.g. IMG) loses implicit touch capture when the stage
+  // takes over. That event bubbles: do not mistake it for stage cancellation.
+  if(e.target===stage&&pointer?.id===e.pointerId){pointer=null;reset();}
+ });
+ // Native image dragging (desktop) otherwise steals pointer events mid-swipe.
+ stage.addEventListener('dragstart',e=>e.preventDefault());
+ // Stop a delayed click from reaching the document-level media zoom handler.
+ stage.addEventListener('click',e=>{
+  if(performance.now()<suppressClickUntil){e.preventDefault();e.stopImmediatePropagation();}
+ },true);
+}
+function animateSwipeExit(direction){
+ const motion=$('#flashMotion'),stage=$('#flashStage');
+ if(!motion||!stage||state.settings.reducedMotion||window.matchMedia('(prefers-reduced-motion: reduce)').matches)return Promise.resolve();
+ motion.classList.remove('is-dragging');
+ return new Promise(resolve=>{
+  requestAnimationFrame(()=>{
+   // Leave the full viewport, not merely the original 135px drag clamp.
+   motion.classList.add('swipe-exiting');
+   motion.style.transform=`translate3d(${direction*(stage.clientWidth+130)}px,0,0) rotate(${direction*14}deg)`;
+   motion.style.opacity='0';
+  });
+  setTimeout(resolve,205);
+ });
 }
 function advanceNoRating(){const s=state.session;if(!s||s.processing)return;s.index++;initCard();renderPlayer();}
-async function rate(rating){const s=state.session;if(!s||s.processing||!playerCard())return;
+async function rate(rating,options={}){const s=state.session;if(!s||s.processing||!playerCard())return;
  if(!s.flipped&&!([0,3].includes(rating)))return;
  s.processing=true;s.clock.pause(clockMs());const c=playerCard(),elapsedMs=Math.floor(s.clock.elapsed(clockMs()));
  const event={id:uuid(),operationId:null,deckId:s.deck.id,cardId:c.id,rating,answerRevealed:s.flipped,cluesSeen:[...s.cluesSeen],elapsedMs,timedOut:state.settings.timer&&s.clock.expired(clockMs()),reviewedAt:new Date().toISOString(),undoneAt:null};event.operationId=event.id;
  try{
   state.reviews.push(event);if(state.backend!=='local')state.queue.push({kind:'review',payload:event});
-  await persist();state.prevReview={event,index:s.index};
-  playTone(rating===0?290:690,.085);vibrate(10);s.index++;initCard();s.processing=false;renderPlayer();if(state.backend!=='local')void flushQueue();
- }catch(error){state.reviews=state.reviews.filter(x=>x.id!==event.id);state.queue=state.queue.filter(q=>q.payload?.id!==event.id);s.processing=false;toast('Review gagal disimpan: '+error.message);}
+  await Promise.all([persist(),options.swipeDirection?animateSwipeExit(options.swipeDirection):Promise.resolve()]);state.prevReview={event,index:s.index};
+  playTone(rating===0?290:690,.085);vibrate(10);s.index++;initCard();s.enterDirection=options.swipeDirection||0;s.processing=false;renderPlayer();if(state.backend!=='local')void flushQueue();
+ }catch(error){state.reviews=state.reviews.filter(x=>x.id!==event.id);state.queue=state.queue.filter(q=>q.payload?.id!==event.id);s.processing=false;const motion=$('#flashMotion');if(motion){motion.classList.remove('swipe-exiting','is-dragging');motion.style.transform='';motion.style.opacity='';}toast('Review gagal disimpan: '+error.message);}
 }
 async function undo(){const prev=state.prevReview,s=state.session;if(!prev||!s||s.processing)return;s.processing=true;
  const event=state.reviews.find(x=>x.id===prev.event.id);if(event)event.undoneAt=new Date().toISOString();

@@ -37,13 +37,13 @@ async def run():
             m=page.locator('#flashMotion');rect=await m.bounding_box()
             x=rect['x']+rect['width']*.5;y=rect['y']+rect['height']*.5
             await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+140,y,steps=8);await page.mouse.up()
-            await page.wait_for_timeout(100)
+            await page.wait_for_timeout(290)
             assert 'Bagian neuron' in await page.locator('.flash-face.front .block-text').first.inner_text()
             await page.locator('#playerUndo').click()
             assert 'mielin' in await page.locator('.flash-face.front .block-text').first.inner_text()
             await page.locator('#playerFlip').click()
             await page.locator('[data-rating="3"]').click()
-            await page.wait_for_timeout(100)
+            await page.wait_for_timeout(290)
             assert 'Bagian neuron' in await page.locator('.flash-face.front .block-text').first.inner_text()
             assert errors == [], errors
             print('PASS desktop' if width > 500 else 'PASS mobile', 'swipe before flip, Undo, flip, rating; dock does not obstruct player')

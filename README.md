@@ -31,7 +31,18 @@ npm run check
 npm test
 # Optional, if Python Playwright + Chromium are installed:
 python scripts/smoke_browser.py
+python scripts/smoke_gestures.py  # actual Chromium mouse + touch gesture regression
 ```
+
+## Smooth whole-card swiping (v0.2.0)
+
+- Drag **left or right** from any part of the card, including its middle text, approved images, and back face. A successful drag moves to the next card and records the selected review rating: **left = Lupa (0), right = Mudah (3)**. These are self-ratings, not verified correct/incorrect answers.
+- The card follows the pointer and exits toward the selected direction before the next one slides in. Reversing direction mid-drag uses the **final displacement**. Short/vertical drags do not rate or flip the card. Swipe works before revealing an answer.
+- **Undo** returns to the previous rated card and voids that review event. A single tap on the card flips it; tap an approved image to zoom. Native vertical scrolling remains available when content is long; embedded video controls are not hijacked.
+- The player uses pointer capture to keep tracking when the finger/mouse leaves the card, but handles the browser's old-child `lostpointercapture` event correctly. Browser tests cover desktop mouse and touchscreen input, including image-center drag and the image tap/zoom exception.
+- The service worker cache version was updated so previously cached app.js/styles.css aren't reused after redeploy.
+
+See [gesture design and QA](docs/SWIPE_GESTURES.md) for details.
 
 `npm run dev` is a **local-only browser preview**. It shows a built-in sample deck and supports review/media approval in IndexedDB. It does **not** simulate an authenticated ChatGPT Sites Worker or D1/R2 cloud. A local demo passing is not evidence of a live ChatGPT connector.
 
