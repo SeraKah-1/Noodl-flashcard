@@ -58,7 +58,7 @@ Deploy the Worker **and** `public/` assets to the **same** Cloudflare Worker pro
 
 ## Acceptance tests after real deployment
 
-- `get_capabilities.version` is `0.10.0`, `requiresHostTransferredFileId:false`, `manualApprovalRequired:false`.
+- `get_capabilities.version` is `0.10.1`, `requiresHostTransferredFileId:false`, `manualApprovalRequired:false`.
 - `tools/list` includes `import_media_bytes`, `begin_media_upload`, `upload_media_chunk`, `finish_media_upload`, `inspect_media_image`, `attach_verified_visuals_batch`, but **not** `import_media_file` or any `openai/fileParams` requirement.
 - Upload a genuine original image; `list_media` shows its SHA-256 and size, `inspect_media_image` actually displays those pixels, and reloaded cards still reference the media.
 - Two distinct source/pixel checks are required for each target; deliberately wrong source pages, altered answers, unverified images, or another account's media must be rejected.

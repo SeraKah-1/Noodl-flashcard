@@ -1,4 +1,4 @@
-# Noodl Flashcards v0.10 — Direct Media, No Human/Host Gate
+# Noodl Flashcards v0.10.1 — Direct Media, No Human/Host Gate
 
 **This release changes the image-ingestion architecture.** The old host-transferred `file_id` tool is **removed**, not kept as the preferred path: the embedded panel sends real image bytes directly through MCP chunks. ChatGPT can also call `import_media_bytes` for small images or the same chunk tools for larger ones. No one-time human approval tokens or image/card confirmation buttons remain. Server-side authentication, byte integrity and card-specific source/pixel checks stay mandatory.
 

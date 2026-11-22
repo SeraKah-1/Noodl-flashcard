@@ -90,3 +90,17 @@ test('idempotency keys cannot be reused with another image MIME, source, or byte
  await assert.rejects(callTool('import_media_bytes',env,'alice',{...input('fixed-key'),base64:Buffer.from(next).toString('base64')}),/Operation ID already used/);
  assert.equal((await callTool('list_media',env,'alice',{})).media.length,1);assert.equal(a.id,(await callTool('list_media',env,'alice',{})).media[0].id);
 });
+
+test('legacy provenance.type slide works through real import_media_bytes to R2',async()=>{
+ const env=fixture(),args={...input('legacy-type-direct'),provenance:{type:'slide',origin:'SKILL_LAB_Atlas_Ilustrasi.pdf',sourcePage:6}};
+ const uploaded=await callTool('import_media_bytes',env,'alice',args);
+ assert.equal(uploaded.status,'approved');assert.equal(uploaded.provenance.kind,'slide');assert.equal(uploaded.provenance.sourcePage,6);
+ assert.equal(env.storage.size,1);assert.equal((await callTool('list_media',env,'alice',{})).media.length,1);
+ const inspected=await readMediaForModel(env,'alice',uploaded.id);
+ assert.deepEqual(Buffer.from(inspected.base64,'base64'),Buffer.from(raw));
+});
+test('invalid provenance kind fails before image storage; error explains how to repair it',async()=>{
+ const env=fixture();
+ await assert.rejects(callTool('import_media_bytes',env,'alice',{...input('invalid-pdf-kind'),provenance:{kind:'pdf',origin:'SKILL_LAB_Atlas_Ilustrasi.pdf',sourcePage:6}}),/Invalid provenance.kind.*slide/);
+ assert.equal(env.storage.size,0);
+});

@@ -286,6 +286,26 @@ async function snapshot(env,owner){
 const schema={type:'string'},str=(description)=>({...schema,description});
 const tool=(name,description,properties={},required=[],options={})=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false},annotations:{readOnlyHint:!!options.readOnly,destructiveHint:!!options.destructive,idempotentHint:true},_meta:{ui:{visibility:options.appOnly?['app']:['model','app'],...(options.opens?{resourceUri:'ui://noodl-flashcards/workspace'}:{})},}});
 const op={operationId:str('Unique idempotency key. Reuse only for exact retry.')},deckFields={deckId:str('Owned deck ID'),expectedRevision:{type:'integer',minimum:1}};
+// Keep the actual server validation contract visible to every MCP tool client.
+// The `type` alias is accepted for older callers, but new calls must prefer `kind`.
+const provenanceSchema={
+ type:'object',
+ description:'Required image source. For a real picture from a PDF page use {kind:"slide",origin:"document.pdf",sourcePage:6}. Accepted kind: file, slide, web, generated, manual. Do NOT set kind:"pdf" or type:"pdf".',
+ properties:{
+  kind:{type:'string',enum:['file','slide','web','generated','manual'],description:'Canonical source category: slide for original slide/PDF page, file for an original local file, web for a licensed HTTPS image, generated for an AI-generated picture, manual for a user-supplied image.'},
+  type:{type:'string',enum:['file','slide','web','generated','manual'],description:'Deprecated alias for kind; supported for backward compatibility only. Prefer kind.'},
+  origin:{type:'string',minLength:1,maxLength:500,description:'Real original filename (e.g. SKILL_LAB_Atlas_Ilustrasi.pdf) or permitted HTTPS source URL. Never invent.'},
+  sourcePage:{type:['integer','null'],minimum:1,maximum:10000,description:'Actual 1-based source PDF page / slide number when known; omit when unknown.'},
+  license:{type:'string',maxLength:100,description:'For web sources, one of CC0, CC-BY, CC-BY-SA, PUBLIC_DOMAIN, EXPLICIT_PERMISSION; other source types may omit.'},
+  licenseEvidenceUrl:{type:'string',maxLength:600,description:'For web sources, a real HTTPS URL with evidence of the license.'},
+  imageUrl:{type:'string',maxLength:600},
+  attribution:{type:'string',maxLength:300},
+  description:{type:'string',maxLength:500}
+ },
+ required:['origin'],
+ anyOf:[{required:['kind']},{required:['type']}],
+ additionalProperties:true
+};
 export const TOOLS=[
  tool('get_capabilities','List supported flashcard creation, timer, clues, storage, automated image checks and media limits.',{},[],{readOnly:true}),
  tool('list_decks','List private flashcard decks for the current ChatGPT account.',{},[],{readOnly:true}),
@@ -310,13 +330,13 @@ export const TOOLS=[
  tool('list_due_cards','Get real SRS due cards and next-review details.',{},[],{readOnly:true}),
  tool('record_review','Save explicit self-reported card rating; pre-reveal swipes are NOT evidence of correct answers.',{...op,deckId:schema,cardId:schema,rating:{type:'integer',minimum:0,maximum:3},answerRevealed:{type:'boolean'},cluesSeen:{type:'array',items:{type:'integer'}},elapsedMs:{type:'integer'},timedOut:{type:'boolean'}},['operationId','deckId','cardId','rating','answerRevealed','cluesSeen','elapsedMs','timedOut']),
  tool('undo_review','Undo an existing review event without deleting historical evidence.',{...op,reviewId:schema},['operationId','reviewId'],{destructive:true}),
- tool('import_media_bytes','Import actual PNG/JPEG/WebP image bytes as Base64 directly through MCP, without host transfer, file_id, approval or URL. One call up to 256 KiB; use the three chunk tools for bigger images.',{...op,base64:schema,mimeType:schema,fileName:schema,provenance:{type:'object',additionalProperties:true}},['operationId','base64','mimeType','fileName','provenance']),
- tool('import_media_url','Import from allowed HTTPS host with license and source metadata. No manual approval, but per-card two-stage validation is required.',{...op,url:schema,provenance:{type:'object',additionalProperties:true},visualReview:{type:'object',additionalProperties:true}},['operationId','url','provenance','visualReview']),
+ tool('import_media_bytes','Import actual PNG/JPEG/WebP image bytes as Base64 directly through MCP, without host transfer, file_id, approval or URL. One call up to 256 KiB; use the three chunk tools for bigger images.',{...op,base64:schema,mimeType:schema,fileName:schema,provenance:provenanceSchema},['operationId','base64','mimeType','fileName','provenance']),
+ tool('import_media_url','Import from allowed HTTPS host with license and source metadata. No manual approval, but per-card two-stage validation is required.',{...op,url:schema,provenance:provenanceSchema,visualReview:{type:'object',additionalProperties:true}},['operationId','url','provenance','visualReview']),
  tool('list_media','List account media, stored-byte integrity and source information.',{},[],{readOnly:true}),
- tool('begin_media_upload','Begin direct, host-independent MCP transfer of real image bytes. Canonical upload for files over 256 KiB; maximum 4 MB.',{byteLength:{type:'integer',minimum:24,maximum:4000000},mimeType:schema,fileName:schema,provenance:{type:'object',additionalProperties:true}},['byteLength','mimeType','fileName','provenance']),
+ tool('begin_media_upload','Begin direct, host-independent MCP transfer of real image bytes. Canonical upload for files over 256 KiB; maximum 4 MB.',{byteLength:{type:'integer',minimum:24,maximum:4000000},mimeType:schema,fileName:schema,provenance:provenanceSchema},['byteLength','mimeType','fileName','provenance']),
  tool('upload_media_chunk','Upload an ordered base64 chunk from the REAL image bytes (up to 96 KiB per chunk). Do not invent or reconstruct file bytes.',{uploadId:schema,index:{type:'integer',minimum:0},base64:schema},['uploadId','index','base64']),
  tool('finish_media_upload','Verify chunk total, MIME signature, image dimensions; persist media, no approval form.',{uploadId:schema},['uploadId']),
- tool('app_begin_media_upload','Start direct image transfer over the Noodl MCP channel; host file APIs are not used.',{byteLength:{type:'integer',minimum:24,maximum:4000000},mimeType:schema,fileName:schema,provenance:{type:'object',additionalProperties:true}},['byteLength','mimeType','fileName','provenance'],{appOnly:true}),
+ tool('app_begin_media_upload','Start direct image transfer over the Noodl MCP channel; host file APIs are not used.',{byteLength:{type:'integer',minimum:24,maximum:4000000},mimeType:schema,fileName:schema,provenance:provenanceSchema},['byteLength','mimeType','fileName','provenance'],{appOnly:true}),
  tool('app_upload_media_chunk','Receive one ordered 96 KiB base64 image chunk from the embedded Noodl UI, not from model text.',{uploadId:schema,index:{type:'integer',minimum:0},base64:schema},['uploadId','index','base64'],{appOnly:true}),
  tool('app_finish_media_upload','Assemble and validate the complete image, then store without manual approval.',{uploadId:schema},['uploadId'],{appOnly:true}),
  tool('app_get_media_chunk','Fallback: read a private image from R2 in safe sized chunks for embedded card/preview rendering.',{mediaId:schema,index:{type:'integer',minimum:0}},['mediaId','index'],{appOnly:true,readOnly:true}),
@@ -334,7 +354,7 @@ export const TOOLS=[
 ];
 export async function callTool(name,env,owner,args={}){
  switch(name){
-  case 'get_capabilities':return {version:'0.10.0',procedureDecks:{ordered:true,cardLevelSource:true,untimed:true,unhintedSequenceRecall:true,separateQuizEngine:false},folders:{nested:true,maximumDepth:6,safeDelete:true,mcpTools:true},layeredCards:{fullScroll:true,explanationSections:true,readerPanel:true,legacyBackPreserved:true},deepCards:{backPages:true,maximumExtraPages:12,backSwipeNavigates:true,visualValidationPerPage:true},mcpContentEditing:{getCard:true,paginatedDeck:true,search:true,patch:true,revisionGuarded:true},content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'none_automated_integrity_and_two_model_reports',mediaIngest:'direct_mcp_bytes_or_chunks',requiresHostTransferredFileId:false,manualApprovalRequired:false,chunkBytes:98304,preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
+  case 'get_capabilities':return {version:'0.10.1',procedureDecks:{ordered:true,cardLevelSource:true,untimed:true,unhintedSequenceRecall:true,separateQuizEngine:false},folders:{nested:true,maximumDepth:6,safeDelete:true,mcpTools:true},layeredCards:{fullScroll:true,explanationSections:true,readerPanel:true,legacyBackPreserved:true},deepCards:{backPages:true,maximumExtraPages:12,backSwipeNavigates:true,visualValidationPerPage:true},mcpContentEditing:{getCard:true,paginatedDeck:true,search:true,patch:true,revisionGuarded:true},content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'none_automated_integrity_and_two_model_reports',mediaIngest:'direct_mcp_bytes_or_chunks',requiresHostTransferredFileId:false,manualApprovalRequired:false,chunkBytes:98304,preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
   case 'list_decks':return {decks:await listDecks(env.DB,owner)};
   case 'list_folders':return {folders:await listFolders(env.DB,owner)};
   case 'create_folder':return await createFolder(env,owner,args);
@@ -417,7 +437,7 @@ export async function handleMcp(req,env){
  const id=rpc.id??null;let result;
  switch(rpc.method){
   case 'server/discover':result={supportedVersions:['2026-07-28'],capabilities:{tools:{},resources:{}}};break;
-  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.10.0'}};break;
+  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.10.1'}};break;
   case 'notifications/initialized':return new Response(null,{status:202});
   case 'ping':result={};break;
   case 'tools/list':result={tools:TOOLS};break;

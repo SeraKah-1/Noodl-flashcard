@@ -1,6 +1,6 @@
 {
   "name": "noodl-flashcards",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "private": true,
   "type": "module",
   "description": "Noodl Deep Cards: host-independent MCP image uploads, no manual media approval, targeted editing, OSCE procedures and layered flashcards.",

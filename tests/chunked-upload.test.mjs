@@ -47,3 +47,13 @@ test('real MCP registry supplies no-host-file upload alternative and keeps it ap
  }
  const direct=TOOLS.find(t=>t.name==='import_media_bytes');assert(direct);assert(!TOOLS.some(t=>t._meta?.['openai/fileParams']));
 });
+
+test('chunked upload accepts provenance.type alias in its first request without making DB errors',async()=>{
+ const env=mockEnv();
+ const bytes=new Uint8Array(readFileSync('tests/fixtures/axon-sample.png'));
+ const started=await beginChunkedUpload(env,'alice',{byteLength:bytes.length,mimeType:'image/png',fileName:'slide06.png',provenance:{type:'slide',origin:'clinical-atlas.pdf',sourcePage:6}});
+ assert(started.uploadId);
+ const row=env.sqlite.prepare('SELECT provenance_json FROM media_uploads WHERE id=?').get(started.uploadId);
+ const saved=JSON.parse(row.provenance_json);
+ assert.equal(saved.kind,'slide');assert.equal(saved.origin,'clinical-atlas.pdf');assert.equal(saved.sourcePage,6);
+});

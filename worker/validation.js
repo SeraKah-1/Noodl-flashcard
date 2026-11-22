@@ -103,22 +103,28 @@ export function validateReview(value){
  assert(Array.isArray(value.cluesSeen)&&value.cluesSeen.every(x=>CLUE_SECONDS.includes(x)),'Invalid cluesSeen');
  return {rating:value.rating,answerRevealed:value.answerRevealed,elapsedMs:value.elapsedMs,timedOut:value.timedOut,cluesSeen:[...new Set(value.cluesSeen)].sort((a,b)=>a-b)};
 }
+export const PROVENANCE_KINDS=Object.freeze(['file','slide','web','generated','manual']);
 export function validateProvenance(input){
- assert(input&&typeof input==='object','Media provenance is required');
- assert(['file','slide','web','generated','manual'].includes(input.kind),'Invalid provenance type');
+ assert(input&&typeof input==='object'&&!Array.isArray(input),'provenance must be an object with kind and origin');
+ // An older model may supply `type` rather than `kind`. Normalize that alias
+ // without guessing the origin or silently accepting an unknown source kind.
+ const hasKind=Object.hasOwn(input,'kind'),hasType=Object.hasOwn(input,'type');
+ assert(!(hasKind&&hasType&&input.kind!==input.type),'Conflicting provenance.kind and provenance.type; use one matching value');
+ const kind=hasKind?input.kind:input.type;
+ assert(PROVENANCE_KINDS.includes(kind),`Invalid provenance.kind: use one of ${PROVENANCE_KINDS.join(', ')}. For a page extracted from a PDF use kind: "slide", origin: "original.pdf", sourcePage: 1. Legacy provenance.type is also accepted.`);
  const origin=txt(input.origin,'source origin',500);
  const sourcePage=input.sourcePage===undefined?null:Number(input.sourcePage);
  assert(sourcePage===null||(Number.isInteger(sourcePage)&&sourcePage>=1&&sourcePage<=10000),'Invalid source page');
  const license=optTxt(input.license,'license',100);
  let licenseEvidenceUrl='',imageUrl='';
- if(input.kind==='web'){
+ if(kind==='web'){
   assert(['CC0','CC-BY','CC-BY-SA','PUBLIC_DOMAIN','EXPLICIT_PERMISSION'].includes(license),'Web media requires documented reusable license');
   licenseEvidenceUrl=txt(input.licenseEvidenceUrl,'license evidence URL',600);
   const source=new URL(origin),evidence=new URL(licenseEvidenceUrl);
   assert(source.protocol==='https:'&&evidence.protocol==='https:','Web origin and license evidence must be HTTPS');
   imageUrl=optTxt(input.imageUrl,'image URL',600);
  }
- return {kind:input.kind,origin,sourcePage,license,licenseEvidenceUrl,imageUrl,attribution:optTxt(input.attribution,'attribution',300),description:optTxt(input.description,'description',500)};
+ return {kind,origin,sourcePage,license,licenseEvidenceUrl,imageUrl,attribution:optTxt(input.attribution,'attribution',300),description:optTxt(input.description,'description',500)};
 }
 export function validateVisualReview(input){
  assert(input&&typeof input==='object','A visual review report is required');
