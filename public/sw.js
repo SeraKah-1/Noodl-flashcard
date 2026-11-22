@@ -1,4 +1,4 @@
-const VERSION='noodl-flashcards-v0.7-layered-reader';
+const VERSION='noodl-flashcards-v0.8-deep-cards';
 const SHELL=['/','/index.html','/styles.css','/app.js','/shared/logic.js','/manifest.webmanifest'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(VERSION).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(Promise.all([caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==VERSION).map(k=>caches.delete(k)))),self.clients.claim()])));

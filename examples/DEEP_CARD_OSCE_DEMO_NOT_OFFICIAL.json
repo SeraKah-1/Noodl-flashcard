@@ -1,0 +1,99 @@
+{
+  "title": "DEMO — Tilik OSCE Pemeriksaan (bukan pedoman resmi)",
+  "description": "Contoh struktur UI Deep Cards; seluruh teknik spesifik, temuan, dan gambar wajib diverifikasi pada tilik asli sebelum digunakan belajar klinis.",
+  "cards": [
+    {
+      "front": [
+        {
+          "type": "text",
+          "text": "Bagaimana melakukan tahap pemeriksaan yang ditetapkan dalam daftar tilik?"
+        }
+      ],
+      "back": [
+        {
+          "type": "text",
+          "text": "Ikuti langkah dan urutan sesuai butir tilik fakultas; peragakan sebelum membaca rincian."
+        }
+      ],
+      "backPages": [
+        {
+          "id": "prosedur",
+          "kind": "procedure",
+          "title": "Prosedur standar",
+          "blocks": [
+            {
+              "type": "text",
+              "text": "Teks langkah prosedur harus disalin akurat dari butir tilik resmi. Jangan mengarang langkah keselamatan atau urutannya."
+            }
+          ],
+          "sourceRefs": [
+            {
+              "kind": "note",
+              "origin": "Ganti dengan dokumen resmi yang sudah diperiksa",
+              "sourcePage": null
+            }
+          ]
+        },
+        {
+          "id": "normal",
+          "kind": "normal",
+          "title": "Temuan normal",
+          "blocks": [
+            {
+              "type": "text",
+              "text": "Temuan normal yang sesuai pemeriksaan ini, berdasarkan pedoman sumber (contoh placeholder; bukan fakta pasien)."
+            }
+          ]
+        },
+        {
+          "id": "abnormal",
+          "kind": "abnormal",
+          "title": "Temuan abnormal",
+          "blocks": [
+            {
+              "type": "text",
+              "text": "Ciri temuan abnormal yang benar-benar didukung sumber. Hindari menyimpulkan penyakit dari satu temuan saja."
+            }
+          ]
+        },
+        {
+          "id": "banding",
+          "kind": "differential",
+          "title": "Interpretasi / diagnosis banding",
+          "blocks": [
+            {
+              "type": "text",
+              "text": "Hubungkan temuan dengan beberapa kemungkinan penyebab dan tanda pembeda. Jangan menyamakan satu temuan dengan diagnosis pasti."
+            }
+          ]
+        },
+        {
+          "id": "visual",
+          "kind": "visual",
+          "title": "Gambar/slide sumber",
+          "blocks": [
+            {
+              "type": "text",
+              "text": "Gambar belum terpasang: impor sebagai pending, verifikasi sumber, cek final, lalu setujui untuk halaman id=visual melalui MCP."
+            }
+          ]
+        }
+      ],
+      "clues": [],
+      "timerSeconds": 20,
+      "tags": [
+        "DEMO",
+        "OSCE",
+        "Deep Card"
+      ],
+      "procedureStep": {
+        "order": 1,
+        "checklistItem": "DEMO - Ganti dengan butir tilik asli",
+        "phase": "DEMO",
+        "critical": false,
+        "sourceDocument": "DEMO BUKAN PEDOMAN KLINIS",
+        "sourcePage": null
+      }
+    }
+  ]
+}

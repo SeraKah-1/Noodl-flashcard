@@ -91,6 +91,117 @@ async function editCard(env,owner,args,remove=false){
  if(remove||!card||await semanticHash(JSON.parse(existing.content_json))!==await semanticHash(card)||JSON.stringify((JSON.parse(existing.content_json).front||[]).filter(x=>x.type==='image'))!==JSON.stringify(card.front.filter(x=>x.type==='image'))||JSON.stringify((JSON.parse(existing.content_json).back||[]).filter(x=>x.type==='image'))!==JSON.stringify(card.back.filter(x=>x.type==='image'))) await invalidateCardBindings(env,owner,id,cardId);
  return resultWrite;
 }
+/** Read one exact, owner-scoped card without fetching a 1000-card deck. */
+async function getCardContent(env,owner,args){
+ const deckId=required(args.deckId,'deckId'),cardId=required(args.cardId,'cardId');
+ const deck=await ownedDeck(env.DB,owner,deckId);
+ const row=await env.DB.prepare('SELECT id,position,content_json,updated_at FROM cards WHERE id=? AND deck_id=? AND owner_id=?').bind(cardId,deckId,owner).first();
+ if(!row)fail('Card not found',404);
+ return {deckId,deckTitle:deck.title,deckRevision:deck.revision,card:{id:row.id,position:row.position,...JSON.parse(row.content_json)},cardUpdatedAt:row.updated_at};
+}
+function cardOutline(row){
+ const c=JSON.parse(row.content_json);
+ return {id:row.id,position:row.position,question:(c.front||[]).filter(b=>b.type==='text').map(b=>b.text).join(' ').slice(0,280),answerPreview:(c.back||[]).filter(b=>b.type==='text').map(b=>b.text).join(' ').slice(0,180),backPageCount:(c.backPages||[]).length,backPages:(c.backPages||[]).map(p=>({id:p.id,kind:p.kind,title:p.title,blockCount:p.blocks.length})),sourceStep:c.procedureStep?.order??null};
+}
+async function listCardContents(env,owner,args){
+ const deckId=required(args.deckId,'deckId');const deck=await ownedDeck(env.DB,owner,deckId);
+ const offset=Number.isInteger(args.offset)?args.offset:0,limit=Number.isInteger(args.limit)?args.limit:25;
+ if(offset<0||offset>1000||limit<1||limit>100)fail('Invalid page range');
+ const rows=(await env.DB.prepare('SELECT id,position,content_json FROM cards WHERE owner_id=? AND deck_id=? ORDER BY position LIMIT ? OFFSET ?').bind(owner,deckId,limit,offset).all()).results;
+ const count=(await env.DB.prepare('SELECT COUNT(*) AS n FROM cards WHERE owner_id=? AND deck_id=?').bind(owner,deckId).first()).n;
+ return {deckId,deckTitle:deck.title,deckRevision:deck.revision,total:count,offset,limit,nextOffset:offset+rows.length<count?offset+rows.length:null,cards:args.includeContent===true?rows.map(r=>({id:r.id,position:r.position,...JSON.parse(r.content_json)})):rows.map(cardOutline)};
+}
+async function searchCardContents(env,owner,args){
+ const query=required(args.query,'query',120).toLocaleLowerCase(),limit=Number.isInteger(args.limit)?args.limit:30;
+ if(limit<1||limit>50)fail('Invalid search limit');
+ const deckId=args.deckId?required(args.deckId,'deckId'):null;
+ if(deckId)await ownedDeck(env.DB,owner,deckId);
+ const rows=(deckId?
+  await env.DB.prepare('SELECT c.id,c.deck_id,c.position,c.content_json FROM cards c JOIN decks d ON d.id=c.deck_id AND d.owner_id=c.owner_id WHERE c.owner_id=? AND c.deck_id=? AND d.deleted_at IS NULL ORDER BY c.position LIMIT 1000').bind(owner,deckId).all():
+  await env.DB.prepare('SELECT c.id,c.deck_id,c.position,c.content_json FROM cards c JOIN decks d ON d.id=c.deck_id AND d.owner_id=c.owner_id WHERE c.owner_id=? AND d.deleted_at IS NULL ORDER BY d.updated_at DESC,c.position LIMIT 5000').bind(owner).all()).results;
+ const matches=[];
+ for(const row of rows){
+  const card=JSON.parse(row.content_json);
+  const fields=[...(card.front||[]),...(card.back||[]),...(card.backPages||[]).flatMap(p=>[{type:'text',text:p.title},...p.blocks]),...(card.explanation?.sections||[]).flatMap(x=>x.blocks)].filter(b=>b.type==='text').map(b=>b.text);
+  const match=fields.find(s=>s.toLocaleLowerCase().includes(query));
+  if(match){const idx=match.toLocaleLowerCase().indexOf(query);matches.push({...cardOutline(row),deckId:row.deck_id,matchedText:match.slice(Math.max(0,idx-70),idx+query.length+120)});}
+  if(matches.length>=limit)break;
+ }
+ return {query,matches,returned:matches.length,searchLimit:limit};
+}
+function applyCardEdits(existing,edits){
+ if(!Array.isArray(edits)||!edits.length||edits.length>20)fail('Patch requires 1..20 targeted edits');
+ const next=structuredClone(existing);
+ for(const edit of edits){
+  if(!edit||typeof edit!=='object'||typeof edit.op!=='string')fail('Invalid edit operation');
+  switch(edit.op){
+   case 'replace_front':next.front=edit.blocks;break;
+   case 'replace_back':next.back=edit.blocks;break;
+   case 'replace_explanation':if(edit.explanation===null)delete next.explanation;else next.explanation=edit.explanation;break;
+   case 'replace_clues':next.clues=edit.clues;break;
+   case 'replace_tags':next.tags=edit.tags;break;
+   case 'replace_procedure_step':next.procedureStep=edit.procedureStep;break;
+   case 'upsert_back_page':{
+    const page=edit.page;const id=required(page?.id,'page.id',70);
+    const pages=[...(next.backPages||[])],idx=pages.findIndex(p=>p.id===id);
+    if(idx>=0)pages[idx]=page;else {
+     const at=edit.atIndex===undefined?pages.length:edit.atIndex;
+     if(!Number.isInteger(at)||at<0||at>pages.length)fail('Invalid new page position');pages.splice(at,0,page);
+    }
+    next.backPages=pages;break;
+   }
+   case 'remove_back_page':{
+    const id=required(edit.pageId,'pageId',70),pages=[...(next.backPages||[])];
+    const index=pages.findIndex(p=>p.id===id);if(index<0)fail('Back page not found');
+    pages.splice(index,1);if(pages.length)next.backPages=pages;else delete next.backPages;break;
+   }
+   case 'reorder_back_pages':{
+    const ids=edit.pageIds,pages=[...(next.backPages||[])];
+    if(!Array.isArray(ids)||ids.length!==pages.length||new Set(ids).size!==ids.length||!pages.every(p=>ids.includes(p.id)))fail('Reordering must list every existing page ID exactly once');
+    next.backPages=ids.map(id=>pages.find(p=>p.id===id));break;
+   }
+   case 'detach_images':{
+    const target=edit.target;
+    if(target==='front'||target==='back')next[target]=(next[target]||[]).filter(b=>b.type!=='image');
+    else if(target==='all'){
+     next.front=(next.front||[]).filter(b=>b.type!=='image');next.back=(next.back||[]).filter(b=>b.type!=='image');
+     if(next.backPages)next.backPages=next.backPages.map(p=>({...p,blocks:p.blocks.filter(b=>b.type!=='image')}));
+    }else if(target==='page'){
+     const page=next.backPages?.find(p=>p.id===edit.pageId);if(!page)fail('Back page not found for detaching images');
+     page.blocks=page.blocks.filter(b=>b.type!=='image');
+    }else fail('Invalid image detach target');
+    break;
+   }
+   default:fail('Unsupported patch action: '+edit.op);
+  }
+ }
+ return next;
+}
+async function patchCardContent(env,owner,args){
+ const deckId=required(args.deckId,'deckId'),cardId=required(args.cardId,'cardId'),opId=required(args.operationId,'operationId',120);
+ const requestBytes=new TextEncoder().encode(JSON.stringify({deckId,cardId,expectedRevision:args.expectedRevision,edits:args.edits}));
+ const requestHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',requestBytes)),x=>x.toString(16).padStart(2,'0')).join('');
+ const prior=await opReceipt(env.DB,owner,opId);
+ if(prior){if(prior.requestHash!==requestHash)fail('Operation ID reused for a different edit',409);return prior;}
+ const deck=await ownedDeck(env.DB,owner,deckId);
+ if(deck.revision!==args.expectedRevision)fail('Revision changed; fetch card again before editing',409);
+ const row=await env.DB.prepare('SELECT id,position,content_json FROM cards WHERE owner_id=? AND deck_id=? AND id=?').bind(owner,deckId,cardId).first();
+ if(!row)fail('Card not found',404);
+ const existing=JSON.parse(row.content_json);
+ const candidate=applyCardEdits(existing,args.edits);
+ const card=validateCard(candidate);
+ if(Boolean(card.procedureStep)!==Boolean(existing.procedureStep))fail('Cannot change a procedure card into a normal card or vice versa');
+ if(card.procedureStep?.order!==existing.procedureStep?.order)fail('Cannot change the order of a checklist step');
+ await assertNoUnapprovedImages(env,owner,deckId,cardId,card);
+ const changed=await semanticHash(existing)!==await semanticHash(card)||JSON.stringify(existing)!==JSON.stringify({...existing,...card});
+ const result={deckId,cardId,revision:deck.revision+1,requestHash,edited:true,changedFields:[...new Set(args.edits.map(e=>e.op))],backPages:(card.backPages||[]).map(p=>({id:p.id,kind:p.kind,title:p.title}))};
+ const time=now();const write=await uniqueWrite(env,owner,opId,result,{condition:[`WHERE EXISTS(SELECT 1 FROM decks WHERE owner_id=? AND id=? AND revision=? AND deleted_at IS NULL)`,[owner,deckId,deck.revision]],build:r=>[
+  env.DB.prepare(`UPDATE decks SET revision=revision+1,updated_at=? WHERE id=? AND owner_id=? AND revision=? AND ${nonceGuard}`).bind(time,deckId,owner,deck.revision,owner,r.id,r.nonce),
+  env.DB.prepare(`UPDATE cards SET content_json=?,updated_at=? WHERE id=? AND deck_id=? AND owner_id=? AND ${nonceGuard}`).bind(JSON.stringify({id:cardId,position:row.position,...card}),time,cardId,deckId,owner,owner,r.id,r.nonce),
+  ...(changed?[env.DB.prepare(`UPDATE visual_bindings SET status='stale',updated_at=? WHERE owner_id=? AND deck_id=? AND card_id=? AND status NOT IN ('stale','rejected') AND ${nonceGuard}`).bind(time,owner,deckId,cardId,owner,r.id,r.nonce)]:[])
+ ]});
+ return write;
+}
 async function renameDeck(env,owner,args){
  const id=required(args.deckId,'deckId'),opId=required(args.operationId,'operationId',120);const prior=await opReceipt(env.DB,owner,opId);if(prior)return prior;
  const row=await ownedDeck(env.DB,owner,id);if(row.revision!==args.expectedRevision)fail('Revision changed',409);
@@ -169,6 +280,10 @@ export const TOOLS=[
  tool('delete_folder','Delete the folder shell only. Moves child folders and decks to its parent; never deletes cards or study history.',{...op,folderId:schema,expectedRevision:{type:'integer',minimum:1}},['operationId','folderId','expectedRevision'],{destructive:true}),
  tool('move_deck_to_folder','Move an existing deck to a selected folder or root without changing cards or review history.',{...op,...deckFields,folderId:{type:['string','null']}},['operationId','deckId','expectedRevision']),
  tool('get_deck','Read full flashcard deck including all cards and source references.',{deckId:schema},['deckId'],{readOnly:true}),
+ tool('list_card_contents','Read an ordered, paginated deck outline or full card contents. Safe for long Deep Cards and 1000-card decks.',{deckId:schema,offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:100},includeContent:{type:'boolean'}},['deckId'],{readOnly:true}),
+ tool('get_card_content','Read exactly one card, all deep back pages, sources, content, and current deck revision.',{deckId:schema,cardId:schema},['deckId','cardId'],{readOnly:true}),
+ tool('search_card_contents','Search owned card text, front/back, deep pages, and explanation without needing card IDs.',{query:schema,deckId:schema,limit:{type:'integer',minimum:1,maximum:50}},['query'],{readOnly:true}),
+ tool('patch_card_content','Modify only requested card fields or specific Deep Card pages, preserve other contents and review IDs. Read get_card_content first and pass its deckRevision as expectedRevision. Never directly insert image blocks; use double visual validation.',{...op,...deckFields,cardId:schema,edits:{type:'array',minItems:1,maxItems:20,items:{type:'object',additionalProperties:true}}},['operationId','deckId','expectedRevision','cardId','edits'],{destructive:true}),
  tool('create_deck','Create a deck with 1..100 flashcards, optionally inside folderId. For normal cards write three clues. Use back for the concise answer, optional explanation.sections[] for long explanations (each section has heading and blocks). Legacy long back text remains fully readable via the reader. For an OSCE checklist supply ordered procedureStep metadata on ALL cards; clues may be empty. Images require approved per-card bindings.',{...op,title:schema,description:schema,folderId:{type:['string','null']},cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','title','cards'],{opens:true}),
  tool('append_cards','Append 1..100 validated cards in sequence; OSCE procedure steps must continue at the next position without gaps.',{...op,...deckFields,cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','deckId','expectedRevision','cards']),
  tool('update_card','Replace a card using the latest deck revision; optional explanation.sections add long-form material without truncating back.',{...op,...deckFields,cardId:schema,card:{type:'object',additionalProperties:true}},['operationId','deckId','expectedRevision','cardId','card'],{destructive:true}),
@@ -186,7 +301,7 @@ export const TOOLS=[
  tool('app_upload_media_chunk','Receive one ordered 96 KiB base64 image chunk from the embedded Noodl UI, not from model text.',{uploadId:schema,index:{type:'integer',minimum:0},base64:schema},['uploadId','index','base64'],{appOnly:true}),
  tool('app_finish_media_upload','Assemble, validate and quarantine the complete user-uploaded image.',{uploadId:schema},['uploadId'],{appOnly:true}),
  tool('app_get_media_chunk','Fallback: read a private image from R2 in safe sized chunks for embedded card/preview rendering.',{mediaId:schema,index:{type:'integer',minimum:0}},['mediaId','index'],{appOnly:true,readOnly:true}),
- tool('create_visual_candidate','Start card-specific visual validation for an already human-previewed image. Does not attach image.',{deckId:schema,cardId:schema,mediaId:schema,side:{type:'string',enum:['front','back']}},['deckId','cardId','mediaId']),
+ tool('create_visual_candidate','Start card-specific visual validation for an already human-previewed image. Optionally set pageId to attach to one Deep Card back page. Does not attach image.',{deckId:schema,cardId:schema,mediaId:schema,side:{type:'string',enum:['front','back']},pageId:schema},['deckId','cardId','mediaId']),
  tool('submit_source_check','Check A: record concrete slide/source observations. This is a model claim, not scientific certification.',{bindingId:schema,report:{type:'object',additionalProperties:true}},['bindingId','report']),
  tool('submit_visual_check','Check B: inspect the final stored image pixels and compare to exact card answer. Requires check A.',{bindingId:schema,report:{type:'object',additionalProperties:true}},['bindingId','report']),
  tool('list_visual_candidates','List card-specific visual validation states for this account.',{},[],{readOnly:true}),
@@ -201,7 +316,7 @@ export const TOOLS=[
 ];
 export async function callTool(name,env,owner,args={}){
  switch(name){
-  case 'get_capabilities':return {version:'0.7.0',procedureDecks:{ordered:true,cardLevelSource:true,untimed:true,unhintedSequenceRecall:true,separateQuizEngine:false},folders:{nested:true,maximumDepth:6,safeDelete:true,mcpTools:true},layeredCards:{fullScroll:true,explanationSections:true,readerPanel:true,legacyBackPreserved:true},content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'human_preview_required',mediaUploadFallback:'app_chunked_mcp',chunkBytes:98304,preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
+  case 'get_capabilities':return {version:'0.8.0',procedureDecks:{ordered:true,cardLevelSource:true,untimed:true,unhintedSequenceRecall:true,separateQuizEngine:false},folders:{nested:true,maximumDepth:6,safeDelete:true,mcpTools:true},layeredCards:{fullScroll:true,explanationSections:true,readerPanel:true,legacyBackPreserved:true},deepCards:{backPages:true,maximumExtraPages:12,backSwipeNavigates:true,visualApprovalPerPage:true},mcpContentEditing:{getCard:true,paginatedDeck:true,search:true,patch:true,revisionGuarded:true},content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'human_preview_required',mediaUploadFallback:'app_chunked_mcp',chunkBytes:98304,preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
   case 'list_decks':return {decks:await listDecks(env.DB,owner)};
   case 'list_folders':return {folders:await listFolders(env.DB,owner)};
   case 'create_folder':return await createFolder(env,owner,args);
@@ -210,6 +325,10 @@ export async function callTool(name,env,owner,args={}){
   case 'delete_folder':return await deleteFolder(env,owner,args);
   case 'move_deck_to_folder':return await moveDeckToFolder(env,owner,args);
   case 'get_deck':return await deckWithCards(env.DB,owner,required(args.deckId,'deckId'));
+  case 'list_card_contents':return await listCardContents(env,owner,args);
+  case 'get_card_content':return await getCardContent(env,owner,args);
+  case 'search_card_contents':return await searchCardContents(env,owner,args);
+  case 'patch_card_content':return await patchCardContent(env,owner,args);
   case 'create_deck':return await createDeck(env,owner,args);
   case 'append_cards':return await appendCards(env,owner,args);
   case 'update_card':return await editCard(env,owner,args);
@@ -251,7 +370,7 @@ export async function handleMcp(req,env){
  const id=rpc.id??null;let result;
  switch(rpc.method){
   case 'server/discover':result={supportedVersions:['2026-07-28'],capabilities:{tools:{},resources:{}}};break;
-  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.7.0'}};break;
+  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.8.0'}};break;
   case 'notifications/initialized':return new Response(null,{status:202});
   case 'ping':result={};break;
   case 'tools/list':result={tools:TOOLS};break;

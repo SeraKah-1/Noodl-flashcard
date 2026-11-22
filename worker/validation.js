@@ -48,7 +48,33 @@ export function validateCard(input){
    return {heading:txt(section.heading,`section ${i+1} heading`,180),blocks};
   })};
  }
- const totalText=[...front,...back,...(explanation?.sections||[]).flatMap(x=>x.blocks)].reduce((n,b)=>n+(b.type==='text'?b.text.length:0),0);
+ let backPages;
+ if(input.backPages!==undefined&&input.backPages!==null){
+  assert(Array.isArray(input.backPages)&&input.backPages.length>=1&&input.backPages.length<=12,'Deep card requires 1..12 extra back pages');
+  const ids=new Set();
+  backPages=input.backPages.map((page,i)=>{
+   assert(page&&typeof page==='object'&&!Array.isArray(page),'Invalid back page');
+   const id=txt(page.id,`back page ${i+1} id`,70);
+   assert(/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id),'Invalid back page ID');
+   assert(!ids.has(id),'Duplicate back page ID');ids.add(id);
+   const kinds=['procedure','normal','abnormal','differential','visual','explanation','source'];
+   assert(kinds.includes(page.kind),'Invalid back page kind');
+   const blocks=side(page.blocks,'back page');
+   const sourceRefs=(page.sourceRefs||[]);
+   assert(Array.isArray(sourceRefs)&&sourceRefs.length<=8,'Too many back page source references');
+   return {id,kind:page.kind,title:txt(page.title,'back page title',120),blocks,
+    sourceRefs:sourceRefs.map(ref=>{
+     assert(ref&&typeof ref==='object'&&!Array.isArray(ref),'Invalid source reference');
+     const kind=ref.kind;
+     assert(['slide','web','generated','note'].includes(kind),'Invalid source reference kind');
+     const origin=txt(ref.origin,'source origin',500),sourcePage=ref.sourcePage??null;
+     assert(sourcePage===null||(Number.isInteger(sourcePage)&&sourcePage>=1&&sourcePage<=10000),'Invalid source reference page');
+     if(kind==='web'){const url=new URL(origin);assert(url.protocol==='https:','Web source reference must be HTTPS');}
+     return {kind,origin,sourcePage};
+    })};
+  });
+ }
+ const totalText=[...front,...back,...(backPages||[]).flatMap(x=>x.blocks),...(explanation?.sections||[]).flatMap(x=>x.blocks)].reduce((n,b)=>n+(b.type==='text'?b.text.length:0),0);
  assert(totalText<=80000,'Card text exceeds 80000 characters');
  const clues=Array.isArray(input.clues)?input.clues:[];
  assert(procedureStep?(clues.length===0||clues.length===3):clues.length===3,procedureStep?'Procedure clues must be empty or exactly three':'Exactly three clues are required');
@@ -57,7 +83,7 @@ export function validateCard(input){
  const clueTexts=byTime.map((c,i)=>({atSecond:CLUE_SECONDS[i],text:txt(c.text,'clue',180)}));
  const tags=Array.isArray(input.tags)?input.tags:[];
  assert(tags.length<=10,'Too many tags');
- return {front,back,clues:clueTexts,timerSeconds:normalizeTimer(input.timerSeconds),tags:tags.map(v=>txt(v,'tag',40)),...(procedureStep?{procedureStep}:{}),...(explanation?{explanation}:{})};
+ return {front,back,clues:clueTexts,timerSeconds:normalizeTimer(input.timerSeconds),tags:tags.map(v=>txt(v,'tag',40)),...(procedureStep?{procedureStep}:{}),...(explanation?{explanation}:{}),...(backPages?{backPages}:{})};
 }
 export function validateDeckInput(input){
  assert(input&&typeof input==='object','Missing deck');

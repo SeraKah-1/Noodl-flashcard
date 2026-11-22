@@ -9,7 +9,7 @@ const clues=[5,10,15].map((atSecond,i)=>({atSecond,text:`Petunjuk ${i+1}`}));
 const valid=(extra={})=>({front:[{type:'text',text:'Pertanyaan'}],back:[{type:'text',text:'Jawaban inti'}],clues,timerSeconds:20,...extra});
 function db(){
  const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON;');
- for(const f of ['0001.sql','0002_visual_validation.sql','0004_folders.sql'])sqlite.exec(readFileSync('migrations/'+f,'utf8'));
+ for(const f of ['0001.sql','0002_visual_validation.sql','0004_folders.sql','0005_deep_cards.sql'])sqlite.exec(readFileSync('migrations/'+f,'utf8'));
  return {sqlite,prepare(sql){return {bind(...args){return {sql,args,first:async()=>sqlite.prepare(sql).get(...args),all:async()=>({results:sqlite.prepare(sql).all(...args)}),run:async()=>sqlite.prepare(sql).run(...args)};}}},async batch(statements){sqlite.exec('BEGIN');try{const out=statements.map(s=>sqlite.prepare(s.sql).run(...s.args));sqlite.exec('COMMIT');return out;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
 }
 test('old cards stay identical; new long answer and sections are never silently truncated',()=>{

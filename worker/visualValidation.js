@@ -12,7 +12,7 @@ function str(v,label,max=1600,min=1){if(typeof v!=='string'||v.trim().length<min
 async function digest(bytes){const b=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));return Array.from(b,x=>x.toString(16).padStart(2,'0')).join('')}
 const enc=new TextEncoder();
 function textBlock(b){return b.type==='image'?null:b;}
-export function semanticContent(card){const content={front:(card.front||[]).map(textBlock).filter(Boolean),back:(card.back||[]).map(textBlock).filter(Boolean)};if(card.procedureStep)content.procedureStep=card.procedureStep;if(card.explanation)content.explanation=card.explanation;return content;}
+export function semanticContent(card){const content={front:(card.front||[]).map(textBlock).filter(Boolean),back:(card.back||[]).map(textBlock).filter(Boolean)};if(card.procedureStep)content.procedureStep=card.procedureStep;if(card.explanation)content.explanation=card.explanation;if(card.backPages)content.backPages=card.backPages.map(p=>({...p,blocks:(p.blocks||[]).map(textBlock).filter(Boolean)}));return content;}
 export async function semanticHash(card){return digest(enc.encode(JSON.stringify(semanticContent(card))));}
 async function cardRow(env,owner,deckId,cardId){
  const row=await env.DB.prepare('SELECT c.content_json,c.position,c.id AS card_id,d.revision AS deck_revision FROM cards c JOIN decks d ON d.id=c.deck_id AND d.owner_id=c.owner_id WHERE c.owner_id=? AND c.deck_id=? AND c.id=? AND d.deleted_at IS NULL').bind(owner,deckId,cardId).first();
@@ -46,15 +46,18 @@ function visualReport(input){
  if(input.recommendation!=='pass'||(input.problems?.length||0)>0)error('Visual needs rework or rejection');
  return {inspectedView:'final_stored_image',readability:'legible_at_phone_width',observedLabels:labels,supportedClaim:claim,countercheck,problems:[],recommendation:'pass'};
 }
-function summary(b){return {bindingId:b.id,deckId:b.deck_id,cardId:b.card_id,mediaId:b.media_id,status:b.status,side:b.side,mediaSha256:b.media_sha256,cardContentSha256:b.card_content_sha256,sourceCheckId:b.source_check_id,visualCheckId:b.visual_check_id,approvalId:b.approval_id,provenance:JSON.parse(b.provenance_json)};}
+function summary(b){return {bindingId:b.id,deckId:b.deck_id,cardId:b.card_id,mediaId:b.media_id,status:b.status,side:b.side,pageId:b.page_id||null,mediaSha256:b.media_sha256,cardContentSha256:b.card_content_sha256,sourceCheckId:b.source_check_id,visualCheckId:b.visual_check_id,approvalId:b.approval_id,provenance:JSON.parse(b.provenance_json)};}
 export async function createCandidate(env,owner,args){
  const deckId=str(args.deckId,'deckId',150),cardId=str(args.cardId,'cardId',150),mediaId=str(args.mediaId,'mediaId',150);
  const side=args.side||'back';if(!['front','back'].includes(side))error('Invalid visual side');
- const {card}=await cardRow(env,owner,deckId,cardId);const media=await getOwnerMedia(env,owner,mediaId);
+ const {card}=await cardRow(env,owner,deckId,cardId);
+ const pageId=args.pageId||null;
+ if(pageId&&(side!=='back'||!card.backPages?.some(p=>p.id===pageId)))error('Back page ID does not belong to the selected card');
+ const media=await getOwnerMedia(env,owner,mediaId);
  if(media.status!=='approved')error('First approve actual image preview at asset level');
  const contentHash=await semanticHash(card);const id=uuid(),t=now();
- await env.DB.prepare('INSERT INTO visual_bindings(id,owner_id,deck_id,card_id,media_id,media_sha256,card_content_sha256,side,provenance_json,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
-  .bind(id,owner,deckId,cardId,mediaId,media.hash,contentHash,side,media.provenance_json,'candidate',t,t).run();
+ await env.DB.prepare('INSERT INTO visual_bindings(id,owner_id,deck_id,card_id,media_id,media_sha256,card_content_sha256,side,page_id,provenance_json,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+  .bind(id,owner,deckId,cardId,mediaId,media.hash,contentHash,side,pageId,media.provenance_json,'candidate',t,t).run();
  return summary(await bindingRow(env,owner,id));
 }
 export async function submitSourceCheck(env,owner,args){
@@ -123,9 +126,11 @@ export async function attachCardVisual(env,owner,args){
  const prior=await env.DB.prepare('SELECT * FROM visual_approvals WHERE id=? AND owner_id=? AND binding_id=? AND revoked_at IS NULL').bind(b.approval_id,owner,id).first();
  if(!prior||prior.media_sha256!==media.hash||prior.card_content_sha256!==b.card_content_sha256)error('Matching human approval is missing');
  const front=Array.isArray(row.card.front)?[...row.card.front]:[],back=Array.isArray(row.card.back)?[...row.card.back]:[];
- const side=b.side==='front'?front:back;
+ const backPages=(row.card.backPages||[]).map(p=>({...p,blocks:[...p.blocks]}));
+ let side=b.side==='front'?front:back;
+ if(b.page_id){const p=backPages.find(p=>p.id===b.page_id);if(!p)error('Approved page no longer exists',409);side=p.blocks;}
  if(!side.some(x=>x.type==='image'&&x.assetId===b.media_id))side.push({type:'image',assetId:b.media_id,alt:JSON.parse(media.provenance_json).description||'Sumber visual yang disetujui'});
- const next={...row.card,front,back};const at=now(),nonce=uuid();
+ const next={...row.card,front,back,...(row.card.backPages?{backPages}:{})};const at=now(),nonce=uuid();
  const receipt={bindingId:id,deckId:b.deck_id,cardId:b.card_id,mediaId:b.media_id,revision:row.deck_revision+1,attached:true};
  await env.DB.batch([
   env.DB.prepare("INSERT INTO operations(owner_id,id,result_json,nonce,created_at) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM decks WHERE owner_id=? AND id=? AND revision=? AND deleted_at IS NULL) AND EXISTS(SELECT 1 FROM cards WHERE owner_id=? AND id=? AND deck_id=? AND content_json=?) AND EXISTS(SELECT 1 FROM visual_bindings WHERE id=? AND owner_id=? AND status='approved_for_card') ON CONFLICT(owner_id,id) DO NOTHING")
@@ -138,21 +143,24 @@ export async function attachCardVisual(env,owner,args){
  return JSON.parse(saved.result_json);
 }
 export async function assertNoUnapprovedImages(env,owner,deckId,cardId,newCard){
- const images=[...newCard.front,...newCard.back].filter(b=>b.type==='image');
+ const locate=card=>[
+  ...(card.front||[]).filter(b=>b.type==='image').map(b=>({assetId:b.assetId,alt:b.alt,pageId:null,side:'front'})),
+  ...(card.back||[]).filter(b=>b.type==='image').map(b=>({assetId:b.assetId,alt:b.alt,pageId:null,side:'back'})),
+  ...(card.backPages||[]).flatMap(p=>(p.blocks||[]).filter(b=>b.type==='image').map(b=>({assetId:b.assetId,alt:b.alt,pageId:p.id,side:'back'})))
+ ];
+ const images=locate(newCard);
  if(!images.length)return;
  if(!deckId||!cardId)error('Images must be added after card creation via visual approval, not directly in create_deck/append_cards');
  const existing=await cardRow(env,owner,deckId,cardId);
  const hash=await semanticHash(newCard);
  if(hash!==(await semanticHash(existing.card)))error('Changing a card answer requires removing attached images and running new visual checks');
- for(const side of ['front','back']){
-  const existingImages=existing.card[side].filter(block=>block.type==='image');
-  for(const image of newCard[side].filter(block=>block.type==='image')){
-   const index=existingImages.findIndex(block=>block.assetId===image.assetId&&block.alt===image.alt);
-   if(index<0)error('Direct media attachment bypasses card-specific visual approval');
-   existingImages.splice(index,1);
-   const binding=await env.DB.prepare("SELECT id FROM visual_bindings WHERE owner_id=? AND deck_id=? AND card_id=? AND media_id=? AND side=? AND status='attached' AND card_content_sha256=?").bind(owner,deckId,cardId,image.assetId,side,hash).first();
-   if(!binding)error('Card image lacks an attached double-checked visual binding');
-  }
+ const oldImages=locate(existing.card);
+ for(const image of images){
+  const index=oldImages.findIndex(x=>x.assetId===image.assetId&&x.alt===image.alt&&x.pageId===image.pageId&&x.side===image.side);
+  if(index<0)error('Direct media attachment bypasses card-specific visual approval');
+  oldImages.splice(index,1);
+  const binding=await env.DB.prepare("SELECT id FROM visual_bindings WHERE owner_id=? AND deck_id=? AND card_id=? AND media_id=? AND side=? AND COALESCE(page_id,'')=? AND status='attached' AND card_content_sha256=?").bind(owner,deckId,cardId,image.assetId,image.side,image.pageId||'',hash).first();
+  if(!binding)error('Card image lacks an attached double-checked visual binding');
  }
 }
 export async function invalidateCardBindings(env,owner,deckId,cardId){

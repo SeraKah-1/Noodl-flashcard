@@ -5,7 +5,7 @@ import {TOOLS,callTool} from '../worker/index.js';
 import {readOwnerMediaChunk} from '../worker/media.js';
 function mockEnv(){
  const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');
- for(const n of ['0001.sql','0002_visual_validation.sql','0003_chunked_media_upload.sql'])sqlite.exec(readFileSync('migrations/'+n,'utf8'));
+ for(const n of ['0001.sql','0002_visual_validation.sql','0003_chunked_media_upload.sql','0005_deep_cards.sql'])sqlite.exec(readFileSync('migrations/'+n,'utf8'));
  const DB={prepare:sql=>({bind(...args){return{first:async()=>sqlite.prepare(sql).get(...args),all:async()=>({results:sqlite.prepare(sql).all(...args)}),run:async()=>sqlite.prepare(sql).run(...args),sql,args}}}),async batch(stmts){sqlite.exec('BEGIN');try{const r=stmts.map(s=>sqlite.prepare(s.sql).run(...s.args));sqlite.exec('COMMIT');return r;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
  const stored=new Map(),MEDIA={put:async(k,data)=>{stored.set(k,new Uint8Array(data));},get:async(k,options)=>{const data=stored.get(k);if(!data)return null;const selected=options?.range?data.slice(options.range.offset,options.range.offset+options.range.length):data;return {body:selected,arrayBuffer:async()=>selected.buffer.slice(selected.byteOffset,selected.byteOffset+selected.byteLength)};},delete:async k=>stored.delete(k)};
  return {DB,MEDIA,sqlite,stored};

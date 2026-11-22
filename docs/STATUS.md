@@ -94,3 +94,10 @@
 - v0.7 MCP version is `0.7.0`; existing deck/review IDs and D1 schema are unchanged.
 - Locally: 47/47 Node tests passed, `smoke_long_text.py` Chromium four viewports passed, existing gesture/OSCE/chunked-upload smoke passed.
 - Needs deployment and live plugin verification, not yet available on connected version.
+
+## v0.8 — Deep Cards + direct MCP content tools (source package, not production)
+
+- Back side can have up to 12 additional independently scrollable pages; swipe on the back navigates, not rates, while the front swipe remains unchanged. Legacy cards without pages preserve their existing behavior.
+- Direct owner-scoped MCP: paginated and exact card read, text search, atomic targeted edit (`patch_card_content`), revision and idempotency guards, OSCE step order protection. SRS review IDs preserved.
+- Visual bindings can target `pageId` under the same A/B/user approval gate. Browser approval panel shows selected page content. Apply migration `0005_deep_cards.sql` only to the existing D1.
+- Existing test suite retained; additional deep-card integration tests and Chromium mouse/touch checks. Production plugin hosting and user-media approval have **not** been performed in this package.

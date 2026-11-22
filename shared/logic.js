@@ -66,3 +66,12 @@ export function orderedProcedureCards(cards){
  if(!isProcedureDeck(cards))return cards;
  return [...cards].sort((a,b)=>a.procedureStep.order-b.procedureStep.order);
 }
+
+/** Deep Cards keep one SRS card ID while dividing the answer into readable pages. */
+export function backPagesFor(card){
+ return [{id:'_answer',kind:'core',title:'Jawaban inti',blocks:card?.back||[],sourceRefs:[]},...(Array.isArray(card?.backPages)?card.backPages:[])];
+}
+export function nextBackPage(current,delta,card){
+ const last=backPagesFor(card).length-1;
+ return Math.max(0,Math.min(last,(Number.isInteger(current)?current:0)+delta));
+}

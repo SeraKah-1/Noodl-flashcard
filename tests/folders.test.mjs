@@ -15,6 +15,7 @@ function setup(existing=false){
  sqlite.exec(readFileSync('migrations/0002_visual_validation.sql','utf8'));
  sqlite.exec(readFileSync('migrations/0003_chunked_media_upload.sql','utf8'));
  sqlite.exec(readFileSync('migrations/0004_folders.sql','utf8'));
+ sqlite.exec(readFileSync('migrations/0005_deep_cards.sql','utf8'));
  const prepare=sql=>({bind(...args){return {sql,args,first:async()=>sqlite.prepare(sql).get(...args),all:async()=>({results:sqlite.prepare(sql).all(...args)}),run:async()=>sqlite.prepare(sql).run(...args)}}});
  const DB={prepare,async batch(statements){sqlite.exec('BEGIN');try{const r=statements.map(x=>sqlite.prepare(x.sql).run(...x.args));sqlite.exec('COMMIT');return r;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
  return {env:{DB},sqlite};

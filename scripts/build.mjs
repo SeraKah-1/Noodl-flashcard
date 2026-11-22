@@ -31,6 +31,7 @@ const migrations = [
   {tag: '0002_visual_validation', when: 1795219200001},
   {tag: '0003_chunked_media_upload', when: 1795219200002},
   {tag: '0004_folders', when: 1795219200003},
+  {tag: '0005_deep_cards', when: 1795219200004},
 ];
 for (const {tag} of migrations) {
   const sql = await readFile(`migrations/${tag}.sql`, 'utf8');

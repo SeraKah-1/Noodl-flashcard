@@ -6,6 +6,15 @@ A new, independent prototype inspired by the visual language of [Noodl](https://
 
 The implementation is **dependency-free browser JavaScript and a Cloudflare Worker**, rather than a direct copy of upstream React. The goal is a lean independent implementation with real tests and a functional offline local demo. If a React source-to-source migration is required later, treat that as a separate implementation choice, not something already completed here.
 
+## v0.8 — Deep Cards + direct MCP content access
+
+- **Multi-page answer:** one flashcard has a short `back` plus optional `backPages[]` (up to 12 extra pages) for procedure, normal/abnormal findings, differential interpretation, visual, sources, and explanations. Existing one-page cards continue unchanged.
+- On a Deep Card's **back**, swipe left/right turns answer pages without rating. Rating is via the existing four buttons. On the **front**, swipe still rates the card. Vertical scrolling and the long-text reader remain accessible, even on 320px phones.
+- **Direct MCP read/edit:** `get_card_content`, paginated `list_card_contents`, `search_card_contents`, and revision-guarded `patch_card_content` let ChatGPT read the exact stored contents and update just one page or field while preserving card IDs, all other pages, folders, and review history. The live player offers **Perbarui isi** when connected to refresh content after external edits.
+- **Verified media per page:** `create_visual_candidate` now accepts optional `pageId`; the same source check → final-image check → human approval workflow binds the image to the correct card **and page**. New SQL migration `migrations/0005_deep_cards.sql` adds a nullable `page_id` to visual bindings. Unapproved images cannot be inserted via `patch_card_content`.
+- Browser regression: desktop mouse and actual Chromium touch at 390px and 320px. New `scripts/smoke_deep_cards.py`. See [Deep Cards and MCP manual](docs/DEEP_CARDS_MCP_v0.8.md).
+- **Local source only** until redeployed against the existing trusted ChatGPT Worker/D1/R2; do not assume the connected plugin already has v0.8.
+
 ## v0.7 — long text no longer becomes inaccessible
 
 - Fixed overflowing centered card content so the first line stays reachable and the full text scrolls in both card faces.

@@ -86,3 +86,7 @@ Back up the existing D1 database, then deploy this Worker/UI against the **same*
 ## v0.7 Layered Reading (no database migration)
 
 See `docs/LAYERED_READING_v0.7.md`. Back up the existing D1/R2 account data, deploy the v0.7 Worker and UI while keeping the same storage bindings, invalidate service worker caches, and verify both MCP version endpoints return `0.7.0`. Existing cards retain IDs and text. New optional `explanation.sections` remains in the existing JSON column. Validate a 64-card deck with very long back text and the OSCE player in a real ChatGPT host before advertising a successful production release.
+
+## v0.8 Deep Cards + MCP content reading and targeted editing
+
+Back up the **same live D1** database and existing private R2 bucket. Apply only `migrations/0005_deep_cards.sql` when upgrading a correctly migrated v0.7 instance (0001–0004 already applied). Deploy Worker/UI with the same account identity ingress; **do not** reinitialize storage or create a new cloud project. Invalidate service worker caches and refresh the active ChatGPT MCP registry. Verify `get_capabilities.version=0.8.0` and that `get_card_content`, `list_card_contents`, `search_card_contents`, `patch_card_content`, plus `create_visual_candidate.pageId` are exposed. Check a test deck before touching private course cards. Existing media bindings default to `page_id=NULL` and retain their prior front/back attachment semantics. See `docs/DEEP_CARDS_MCP_v0.8.md`.
