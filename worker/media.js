@@ -63,7 +63,7 @@ export async function fetchAllowedImage(urlString,hosts,fetcher=fetch){
  return {bytes,info};
 }
 const uuid=()=>crypto.randomUUID(),now=()=>new Date().toISOString();
-export async function storePendingImage(env,owner,bytes,provenanceInput,visualReviewInput={observation:'The image needs human inspection before use.',legible:false,relevant:false}){
+export async function storePendingImage(env,owner,bytes,provenanceInput,visualReviewInput={observation:'Media bytes validated on ingestion. Content relevance still requires separate source and visual checks.',legible:false,relevant:false}){
  if(!env.MEDIA||!env.DB)throw Error('D1 and R2 bindings are required');
  const info=identifyImage(bytes),provenance=validateProvenance(provenanceInput),visualReview=validateVisualReview(visualReviewInput);
  const digest=await crypto.subtle.digest('SHA-256',bytes);
@@ -72,10 +72,22 @@ export async function storePendingImage(env,owner,bytes,provenanceInput,visualRe
  await env.MEDIA.put(key,bytes,{httpMetadata:{contentType:info.mime},customMetadata:{owner,id,hash}});
  try{
   await env.DB.prepare(`INSERT INTO media(id,owner_id,storage_key,mime,width,height,bytes,hash,status,provenance_json,visual_review_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
-   .bind(id,owner,key,info.mime,info.width,info.height,info.bytes,hash,'pending',JSON.stringify(provenance),JSON.stringify(visualReview),now()).run();
+   .bind(id,owner,key,info.mime,info.width,info.height,info.bytes,hash,'approved',JSON.stringify(provenance),JSON.stringify(visualReview),now()).run();
  }catch(error){await env.MEDIA.delete(key);throw error;}
- return {id,status:'pending',...info,sha256:hash,provenance,visualReview};
+ return {id,status:'approved',...info,sha256:hash,provenance,visualReview,integrityChecked:true,cardRelevanceChecked:false};
 }
+export async function acceptPendingMediaIntegrity(env,owner,id){
+ const row=await getOwnerMedia(env,owner,id);
+ if(row.status==='rejected')throw Error('Rejected image cannot be accepted');
+ if(row.status==='approved')return mediaSummary(row);
+ const object=await env.MEDIA.get(row.storage_key);if(!object)throw Error('Image bytes missing from storage');
+ const bytes=new Uint8Array(await object.arrayBuffer());const actual=identifyImage(bytes);
+ const hex=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+ if(hex!==row.hash||actual.bytes!==row.bytes||actual.mime!==row.mime||actual.width!==row.width||actual.height!==row.height)throw Error('Media bytes failed integrity checks');
+ await env.DB.prepare("UPDATE media SET status='approved',reviewed_at=? WHERE owner_id=? AND id=? AND status='pending'").bind(now(),owner,id).run();
+ return {...mediaSummary(await getOwnerMedia(env,owner,id)),integrityChecked:true,cardRelevanceChecked:false};
+}
+
 export async function getOwnerMedia(env,owner,id){
  const row=await env.DB.prepare('SELECT * FROM media WHERE id=? AND owner_id=?').bind(id,owner).first();
  if(!row)throw Error('Image not found in this account');return row;
@@ -98,34 +110,20 @@ export async function readOwnerMediaChunk(env,owner,id,index){
  let binary='';for(let n=0;n<bytes.length;n+=8192)binary+=String.fromCharCode(...bytes.subarray(n,n+8192));
  return {mediaId:id,index,chunkCount:Math.ceil(row.bytes/chunkBytes),chunkBytes,bytes:row.bytes,mime:row.mime,sha256:row.hash,base64:btoa(binary)};
 }
+export async function readMediaForModel(env,owner,id){
+ const row=await getOwnerMedia(env,owner,id);
+ if(row.status==='rejected')throw Error('Rejected image cannot be inspected');
+ const object=await env.MEDIA.get(row.storage_key);if(!object)throw Error('Stored media is missing');
+ const bytes=new Uint8Array(await object.arrayBuffer());const parsed=identifyImage(bytes);
+ const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+ if(hash!==row.hash||parsed.mime!==row.mime||parsed.bytes!==row.bytes||parsed.width!==row.width||parsed.height!==row.height)throw Error('Image integrity mismatch');
+ let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
+ return {mediaId:id,mime:row.mime,sha256:row.hash,width:row.width,height:row.height,provenance:JSON.parse(row.provenance_json),base64:btoa(binary)};
+}
 export async function serveOwnerMedia(env,owner,id){
  const row=await getOwnerMedia(env,owner,id);
  const object=await env.MEDIA.get(row.storage_key);if(!object)throw Error('Image data missing');
  return new Response(object.body,{headers:{'Content-Type':row.mime,'Content-Security-Policy':"default-src 'none'; sandbox",'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Cross-Origin-Resource-Policy':'same-origin'}});
-}
-async function tokenHash(value){const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');}
-export async function issueMediaReviewChallenge(env,owner,id){
- const media=await getOwnerMedia(env,owner,id);
- if(media.status!=='pending')throw Error('Only pending images require a visual review challenge');
- const challenge=crypto.randomUUID()+'-'+crypto.randomUUID();
- const expiresAt=new Date(Date.now()+20*60_000).toISOString();
- await env.DB.prepare(`INSERT INTO media_review_challenges(media_id,owner_id,token_hash,expires_at) VALUES(?,?,?,?) ON CONFLICT(media_id,owner_id) DO UPDATE SET token_hash=excluded.token_hash,expires_at=excluded.expires_at`)
- .bind(id,owner,await tokenHash(challenge),expiresAt).run();
- return {mediaId:id,challenge,expiresAt};
-}
-export async function approveOwnerMedia(env,owner,id,attestation){
- if(!attestation||attestation.imageRendered!==true||attestation.sourceMatches!==true||attestation.labelsLegible!==true||attestation.contentRelevant!==true)throw Error('Preview and all visual checks must be confirmed');
- if(typeof attestation.note!=='string'||attestation.note.trim().length<12||attestation.note.length>500)throw Error('Review notes must describe what was actually checked');
- if(typeof attestation.challenge!=='string')throw Error('A preview-specific review challenge is required');
- const ticket=await env.DB.prepare('SELECT token_hash,expires_at FROM media_review_challenges WHERE media_id=? AND owner_id=?').bind(id,owner).first();
- if(!ticket||ticket.expires_at<=now()||ticket.token_hash!==await tokenHash(attestation.challenge))throw Error('Review challenge invalid or expired. Open the actual full-size preview again');
- const row=await getOwnerMedia(env,owner,id);
- if(row.status==='rejected')throw Error('Rejected media cannot be approved');
- if(row.status==='approved')return mediaSummary(row);
- await env.DB.prepare(`UPDATE media SET status='approved', approval_json=?, reviewed_at=? WHERE owner_id=? AND id=? AND status='pending'`)
-  .bind(JSON.stringify({note:attestation.note,confirmed:{sourceMatches:true,labelsLegible:true,contentRelevant:true,imageRendered:true},actor:'account_user'}),now(),owner,id).run();
- await env.DB.prepare('DELETE FROM media_review_challenges WHERE media_id=? AND owner_id=?').bind(id,owner).run();
- return mediaSummary(await getOwnerMedia(env,owner,id));
 }
 export async function rejectOwnerMedia(env,owner,id){
  const row=await getOwnerMedia(env,owner,id);
@@ -136,5 +134,5 @@ export async function rejectOwnerMedia(env,owner,id){
 }
 export async function assertAllApprovedMedia(env,owner,cards){
  const ids=new Set();for(const c of cards){for(const block of [...c.front,...c.back])if(block.type==='image')ids.add(block.assetId);}
- for(const id of ids){const row=await getOwnerMedia(env,owner,id);if(row.status!=='approved')throw Error(`Image ${id} requires real preview and human approval`);}
+ for(const id of ids){const row=await getOwnerMedia(env,owner,id);if(row.status!=='approved')throw Error(`Image ${id} must pass stored-byte integrity validation`);}
 }

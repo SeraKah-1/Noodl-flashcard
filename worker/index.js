@@ -1,10 +1,10 @@
 import {validateCard,validateDeckInput,validateReview,validateProvenance,validateVisualReview} from './validation.js';
 import {assertProcedureSequence} from '../shared/logic.js';
-import {storePendingImage,fetchAllowedImage,getOwnerMedia,mediaSummary,listOwnerMedia,serveOwnerMedia,readOwnerMediaChunk,approveOwnerMedia,rejectOwnerMedia,issueMediaReviewChallenge,identifyImage} from './media.js';
+import {storePendingImage,fetchAllowedImage,getOwnerMedia,mediaSummary,listOwnerMedia,serveOwnerMedia,readOwnerMediaChunk,rejectOwnerMedia,identifyImage,acceptPendingMediaIntegrity,readMediaForModel} from './media.js';
 import {replayReviews} from '../shared/logic.js';
 import {listFolders,requireFolder,createFolder,renameFolder,moveFolder,deleteFolder,moveDeckToFolder} from './folders.js';
 import {beginChunkedUpload,appendChunkedUpload,finishChunkedUpload,purgeExpiredUploads} from './chunkedUpload.js';
-import {createCandidate,submitSourceCheck,submitVisualCheck,listVisualCandidates,inspectVisualBinding,beginVisualApproval,approveCardVisual,attachCardVisual,assertNoUnapprovedImages,invalidateCardBindings,semanticHash} from './visualValidation.js';
+import {createCandidate,submitSourceCheck,submitVisualCheck,listVisualCandidates,inspectVisualBinding,attachCardVisual,assertNoUnapprovedImages,invalidateCardBindings,semanticHash} from './visualValidation.js';
 const uuid=()=>crypto.randomUUID(),now=()=>new Date().toISOString();
 function fail(message,status=400){const e=new Error(message);e.status=status;throw e;}
 function required(v,label,max=200){if(typeof v!=='string'||!v.trim()||v.length>max)fail(`Invalid ${label}`);return v.trim();}
@@ -241,15 +241,32 @@ async function listDue(env,owner){
  const cards=rows.filter(r=>valid.has(r.deck_id)).map(r=>({deckId:r.deck_id,cardId:r.id,...replayReviews(reviews,r.id),front:JSON.parse(r.content_json).front}));
  return {due:cards.filter(c=>c.due),total:cards.length};
 }
-async function importMediaFile(env,owner,args){
- const id=required(args.operationId,'operationId',120),prev=await opReceipt(env.DB,owner,id);if(prev)return prev;
- const file=args.file;if(!file||typeof file!=='object'||!/^file_[A-Za-z0-9_-]+$/.test(file.file_id)||typeof file.download_url!=='string')fail('Requires a host-transferred file object containing file_id and download_url; use in-app direct upload if unavailable');
- const provenance=validateProvenance(args.provenance),report=validateVisualReview(args.visualReview);
- const result=await fetchAllowedImage(file.download_url,env.ALLOWED_TRANSFER_HOSTS);
- const saved=await storePendingImage(env,owner,result.bytes,provenance,report);
- // Store receipt. Image remains pending until separately approved in real preview UI.
- try{await env.DB.prepare('INSERT INTO operations(owner_id,id,result_json,nonce,created_at) VALUES(?,?,?,?,?)').bind(owner,id,JSON.stringify(saved),uuid(),now()).run();}catch(err){const old=await opReceipt(env.DB,owner,id);if(old)return old;throw err;}
- return saved;
+// First-class MCP image ingestion: the bytes arrive inside this call, with no host file ID,
+// download URL, transfer approval or ChatGPT-specific attachment handling.
+// For larger files, begin_media_upload/upload_media_chunk/finish_media_upload is canonical.
+async function importMediaBytes(env,owner,args){
+ const opId=required(args.operationId,'operationId',120);
+ const mime=required(args.mimeType,'mimeType',60);
+ if(!['image/png','image/jpeg','image/webp'].includes(mime))fail('Only PNG, JPEG, and WebP are allowed');
+ required(args.fileName,'fileName',250);
+ const data=args.base64;
+ if(typeof data!=='string'||data.length<32||data.length>4*Math.ceil(256*1024/3)||data.length%4!==0||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data))fail('Invalid base64 image; for larger images use begin_media_upload/upload_media_chunk/finish_media_upload');
+ let binary;try{binary=atob(data);}catch{fail('Invalid base64 image')}
+ if(binary.length>256*1024)fail('Direct MCP image limit is 256 KiB; use chunk tools for larger images');
+ const bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));
+ const identified=identifyImage(bytes);
+ if(identified.mime!==mime)fail('Declared MIME does not match original image bytes');
+ const source=validateProvenance(args.provenance);
+ const currentSha=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),x=>x.toString(16).padStart(2,'0')).join('');
+ const previous=await opReceipt(env.DB,owner,opId);
+ if(previous){
+  if(previous.sha256!==currentSha||previous.mime!==mime||JSON.stringify(previous.provenance)!==JSON.stringify(source))fail('Operation ID already used with different image bytes or source',409);
+  return previous;
+ }
+ const result=await storePendingImage(env,owner,bytes,source);
+ try{await env.DB.prepare('INSERT INTO operations(owner_id,id,result_json,nonce,created_at) VALUES(?,?,?,?,?)').bind(owner,opId,JSON.stringify(result),uuid(),now()).run();}
+ catch(err){const old=await opReceipt(env.DB,owner,opId);if(old)return old;throw err;}
+ return result;
 }
 async function importMediaUrl(env,owner,args){
  const id=required(args.operationId,'operationId',120),prev=await opReceipt(env.DB,owner,id);if(prev)return prev;
@@ -267,11 +284,10 @@ async function snapshot(env,owner){
  return {ownerId:owner,decks:all,folders:await listFolders(env.DB,owner),reviews:await reviewHistory(env.DB,owner),media:await listOwnerMedia(env,owner),visualBindings:await listVisualCandidates(env,owner)};
 }
 const schema={type:'string'},str=(description)=>({...schema,description});
-const tool=(name,description,properties={},required=[],options={})=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false},annotations:{readOnlyHint:!!options.readOnly,destructiveHint:!!options.destructive,idempotentHint:true},_meta:{ui:{visibility:options.appOnly?['app']:['model','app'],...(options.opens?{resourceUri:'ui://noodl-flashcards/workspace'}:{})},...(options.fileParam?{'openai/fileParams':['file']}:{})}});
+const tool=(name,description,properties={},required=[],options={})=>({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false},annotations:{readOnlyHint:!!options.readOnly,destructiveHint:!!options.destructive,idempotentHint:true},_meta:{ui:{visibility:options.appOnly?['app']:['model','app'],...(options.opens?{resourceUri:'ui://noodl-flashcards/workspace'}:{})},}});
 const op={operationId:str('Unique idempotency key. Reuse only for exact retry.')},deckFields={deckId:str('Owned deck ID'),expectedRevision:{type:'integer',minimum:1}};
-const imageFileSchema={type:'object',properties:{download_url:schema,file_id:schema,mime_type:schema,file_name:schema},required:['download_url','file_id'],additionalProperties:false};
 export const TOOLS=[
- tool('get_capabilities','List supported flashcard creation, timer, clues, storage, image-review and media limits.',{},[],{readOnly:true}),
+ tool('get_capabilities','List supported flashcard creation, timer, clues, storage, automated image checks and media limits.',{},[],{readOnly:true}),
  tool('list_decks','List private flashcard decks for the current ChatGPT account.',{},[],{readOnly:true}),
  tool('list_folders','List the current account’s nested folders (including empty folders); deck contents are unchanged.',{},[],{readOnly:true}),
  tool('create_folder','Create a folder under a parent folder, or at root when parentId is omitted. Maximum six nesting levels.',{...op,name:schema,parentId:{type:['string','null']}},['operationId','name']),
@@ -283,8 +299,8 @@ export const TOOLS=[
  tool('list_card_contents','Read an ordered, paginated deck outline or full card contents. Safe for long Deep Cards and 1000-card decks.',{deckId:schema,offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:100},includeContent:{type:'boolean'}},['deckId'],{readOnly:true}),
  tool('get_card_content','Read exactly one card, all deep back pages, sources, content, and current deck revision.',{deckId:schema,cardId:schema},['deckId','cardId'],{readOnly:true}),
  tool('search_card_contents','Search owned card text, front/back, deep pages, and explanation without needing card IDs.',{query:schema,deckId:schema,limit:{type:'integer',minimum:1,maximum:50}},['query'],{readOnly:true}),
- tool('patch_card_content','Modify only requested card fields or specific Deep Card pages, preserve other contents and review IDs. Read get_card_content first and pass its deckRevision as expectedRevision. Never directly insert image blocks; use double visual validation.',{...op,...deckFields,cardId:schema,edits:{type:'array',minItems:1,maxItems:20,items:{type:'object',additionalProperties:true}}},['operationId','deckId','expectedRevision','cardId','edits'],{destructive:true}),
- tool('create_deck','Create a deck with 1..100 flashcards, optionally inside folderId. For normal cards write three clues. Use back for the concise answer, optional explanation.sections[] for long explanations (each section has heading and blocks). Legacy long back text remains fully readable via the reader. For an OSCE checklist supply ordered procedureStep metadata on ALL cards; clues may be empty. Images require approved per-card bindings.',{...op,title:schema,description:schema,folderId:{type:['string','null']},cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','title','cards'],{opens:true}),
+ tool('patch_card_content','Modify only requested card fields or specific Deep Card pages, preserve other contents and review IDs. Read get_card_content first and pass its deckRevision as expectedRevision. Never directly insert image blocks; use two-stage visual validation.',{...op,...deckFields,cardId:schema,edits:{type:'array',minItems:1,maxItems:20,items:{type:'object',additionalProperties:true}}},['operationId','deckId','expectedRevision','cardId','edits'],{destructive:true}),
+ tool('create_deck','Create a deck with 1..100 flashcards, optionally inside folderId. For normal cards write three clues. Use back for the concise answer, optional explanation.sections[] for long explanations (each section has heading and blocks). Legacy long back text remains fully readable via the reader. For an OSCE checklist supply ordered procedureStep metadata on ALL cards; clues may be empty. Images must be attached with two source/pixel check reports; no human approval.',{...op,title:schema,description:schema,folderId:{type:['string','null']},cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','title','cards'],{opens:true}),
  tool('append_cards','Append 1..100 validated cards in sequence; OSCE procedure steps must continue at the next position without gaps.',{...op,...deckFields,cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','deckId','expectedRevision','cards']),
  tool('update_card','Replace a card using the latest deck revision; optional explanation.sections add long-form material without truncating back.',{...op,...deckFields,cardId:schema,card:{type:'object',additionalProperties:true}},['operationId','deckId','expectedRevision','cardId','card'],{destructive:true}),
  tool('delete_card','Delete a card. A deck must keep at least one card.',{...op,...deckFields,cardId:schema},['operationId','deckId','expectedRevision','cardId'],{destructive:true}),
@@ -294,29 +310,31 @@ export const TOOLS=[
  tool('list_due_cards','Get real SRS due cards and next-review details.',{},[],{readOnly:true}),
  tool('record_review','Save explicit self-reported card rating; pre-reveal swipes are NOT evidence of correct answers.',{...op,deckId:schema,cardId:schema,rating:{type:'integer',minimum:0,maximum:3},answerRevealed:{type:'boolean'},cluesSeen:{type:'array',items:{type:'integer'}},elapsedMs:{type:'integer'},timedOut:{type:'boolean'}},['operationId','deckId','cardId','rating','answerRevealed','cluesSeen','elapsedMs','timedOut']),
  tool('undo_review','Undo an existing review event without deleting historical evidence.',{...op,reviewId:schema},['operationId','reviewId'],{destructive:true}),
- tool('import_media_file','Transfer an actual image file from ChatGPT. The image is quarantined until visual preview and account-user approval. For slides/PDF ChatGPT must FIRST extract a real PNG/JPEG/WebP crop and inspect it.',{...op,file:imageFileSchema,provenance:{type:'object',additionalProperties:true},visualReview:{type:'object',additionalProperties:true}},['operationId','file','provenance','visualReview'],{fileParam:true}),
- tool('import_media_url','Import an image only from an explicitly allowlisted HTTPS host, with reusable license and source metadata; review required before attaching.',{...op,url:schema,provenance:{type:'object',additionalProperties:true},visualReview:{type:'object',additionalProperties:true}},['operationId','url','provenance','visualReview']),
- tool('list_media','List current user media, including whether approved or pending.',{},[],{readOnly:true}),
- tool('app_begin_media_upload','Start a user-selected image upload directly over MCP when ChatGPT host file transfer is unavailable.',{byteLength:{type:'integer',minimum:24,maximum:4000000},mimeType:schema,fileName:schema,provenance:{type:'object',additionalProperties:true}},['byteLength','mimeType','fileName','provenance'],{appOnly:true}),
+ tool('import_media_bytes','Import actual PNG/JPEG/WebP image bytes as Base64 directly through MCP, without host transfer, file_id, approval or URL. One call up to 256 KiB; use the three chunk tools for bigger images.',{...op,base64:schema,mimeType:schema,fileName:schema,provenance:{type:'object',additionalProperties:true}},['operationId','base64','mimeType','fileName','provenance']),
+ tool('import_media_url','Import from allowed HTTPS host with license and source metadata. No manual approval, but per-card two-stage validation is required.',{...op,url:schema,provenance:{type:'object',additionalProperties:true},visualReview:{type:'object',additionalProperties:true}},['operationId','url','provenance','visualReview']),
+ tool('list_media','List account media, stored-byte integrity and source information.',{},[],{readOnly:true}),
+ tool('begin_media_upload','Begin direct, host-independent MCP transfer of real image bytes. Canonical upload for files over 256 KiB; maximum 4 MB.',{byteLength:{type:'integer',minimum:24,maximum:4000000},mimeType:schema,fileName:schema,provenance:{type:'object',additionalProperties:true}},['byteLength','mimeType','fileName','provenance']),
+ tool('upload_media_chunk','Upload an ordered base64 chunk from the REAL image bytes (up to 96 KiB per chunk). Do not invent or reconstruct file bytes.',{uploadId:schema,index:{type:'integer',minimum:0},base64:schema},['uploadId','index','base64']),
+ tool('finish_media_upload','Verify chunk total, MIME signature, image dimensions; persist media, no approval form.',{uploadId:schema},['uploadId']),
+ tool('app_begin_media_upload','Start direct image transfer over the Noodl MCP channel; host file APIs are not used.',{byteLength:{type:'integer',minimum:24,maximum:4000000},mimeType:schema,fileName:schema,provenance:{type:'object',additionalProperties:true}},['byteLength','mimeType','fileName','provenance'],{appOnly:true}),
  tool('app_upload_media_chunk','Receive one ordered 96 KiB base64 image chunk from the embedded Noodl UI, not from model text.',{uploadId:schema,index:{type:'integer',minimum:0},base64:schema},['uploadId','index','base64'],{appOnly:true}),
- tool('app_finish_media_upload','Assemble, validate and quarantine the complete user-uploaded image.',{uploadId:schema},['uploadId'],{appOnly:true}),
+ tool('app_finish_media_upload','Assemble and validate the complete image, then store without manual approval.',{uploadId:schema},['uploadId'],{appOnly:true}),
  tool('app_get_media_chunk','Fallback: read a private image from R2 in safe sized chunks for embedded card/preview rendering.',{mediaId:schema,index:{type:'integer',minimum:0}},['mediaId','index'],{appOnly:true,readOnly:true}),
- tool('create_visual_candidate','Start card-specific visual validation for an already human-previewed image. Optionally set pageId to attach to one Deep Card back page. Does not attach image.',{deckId:schema,cardId:schema,mediaId:schema,side:{type:'string',enum:['front','back']},pageId:schema},['deckId','cardId','mediaId']),
+ tool('create_visual_candidate','Start card-specific source+visual validation for a stored image. Optionally set pageId for Deep Card back page. No user approval step.',{deckId:schema,cardId:schema,mediaId:schema,side:{type:'string',enum:['front','back']},pageId:schema},['deckId','cardId','mediaId']),
  tool('submit_source_check','Check A: record concrete slide/source observations. This is a model claim, not scientific certification.',{bindingId:schema,report:{type:'object',additionalProperties:true}},['bindingId','report']),
  tool('submit_visual_check','Check B: inspect the final stored image pixels and compare to exact card answer. Requires check A.',{bindingId:schema,report:{type:'object',additionalProperties:true}},['bindingId','report']),
  tool('list_visual_candidates','List card-specific visual validation states for this account.',{},[],{readOnly:true}),
- tool('get_card_visual_audit','Read both check reports and the card-specific approval state.',{bindingId:schema},['bindingId'],{readOnly:true}),
- tool('attach_visual_to_card','Attach a human-approved, double-checked visual to one card with revision protection. No bypass via update_card.',{...op,bindingId:schema,expectedRevision:{type:'integer',minimum:1}},['operationId','bindingId','expectedRevision']),
- tool('app_begin_visual_approval','Open short-lived challenge for human inspection of this exact image and card.',{bindingId:schema},['bindingId'],{appOnly:true}),
- tool('app_approve_card_visual','Approve the image for exactly this card only after inspecting actual preview and both reports.',{bindingId:schema,challenge:schema,imageRendered:{type:'boolean'},sourceMatches:{type:'boolean'},labelsLegible:{type:'boolean'},contentRelevant:{type:'boolean'},note:schema},['bindingId','challenge','imageRendered','sourceMatches','labelsLegible','contentRelevant','note'],{appOnly:true}),
+ tool('get_card_visual_audit','Read both card-specific model inspection reports and hashes.',{bindingId:schema},['bindingId'],{readOnly:true}),
+ tool('accept_legacy_media','Validate R2 bytes and move old pending media to storage-ready state (does not certify visual relevance).',{mediaId:schema},['mediaId']),
+ tool('inspect_media_image','Return the actual stored image as MCP image content for visual inspection before source/check reports.',{mediaId:schema},['mediaId'],{readOnly:true}),
+ tool('attach_verified_visuals_batch','Attach up to 40 card-bound images after two model review reports per image; partial failures reported, existing cards/reviews preserved. DO NOT submit reports without inspecting the actual stored pixels. No human approval click.',{...op,items:{type:'array',minItems:1,maxItems:40,items:{type:'object',additionalProperties:true}}},['operationId','items']),
+ tool('attach_visual_to_card','Attach after source and final stored-image checks pass. Card revision and hashes must match; no human approval click.',{...op,bindingId:schema,expectedRevision:{type:'integer',minimum:1}},['operationId','bindingId','expectedRevision']),
  tool('app_snapshot','Embedded UI reads private decks and review events.',{},[],{readOnly:true,appOnly:true}),
- tool('app_begin_media_review','Get short-lived preview challenge for a pending image; only call from the visible media preview after image.decode().',{mediaId:schema},['mediaId'],{appOnly:true,readOnly:true}),
- tool('app_approve_media','Embedded UI action AFTER full-size image loads and all human visual checks are checked.',{mediaId:schema,attestation:{type:'object',additionalProperties:true}},['mediaId','attestation'],{appOnly:true}),
  tool('app_reject_media','Embedded UI rejects/quarantines a bad image; removes object storage bytes.',{mediaId:schema},['mediaId'],{appOnly:true,destructive:true})
 ];
 export async function callTool(name,env,owner,args={}){
  switch(name){
-  case 'get_capabilities':return {version:'0.8.0',procedureDecks:{ordered:true,cardLevelSource:true,untimed:true,unhintedSequenceRecall:true,separateQuizEngine:false},folders:{nested:true,maximumDepth:6,safeDelete:true,mcpTools:true},layeredCards:{fullScroll:true,explanationSections:true,readerPanel:true,legacyBackPreserved:true},deepCards:{backPages:true,maximumExtraPages:12,backSwipeNavigates:true,visualApprovalPerPage:true},mcpContentEditing:{getCard:true,paginatedDeck:true,search:true,patch:true,revisionGuarded:true},content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'human_preview_required',mediaUploadFallback:'app_chunked_mcp',chunkBytes:98304,preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
+  case 'get_capabilities':return {version:'0.10.0',procedureDecks:{ordered:true,cardLevelSource:true,untimed:true,unhintedSequenceRecall:true,separateQuizEngine:false},folders:{nested:true,maximumDepth:6,safeDelete:true,mcpTools:true},layeredCards:{fullScroll:true,explanationSections:true,readerPanel:true,legacyBackPreserved:true},deepCards:{backPages:true,maximumExtraPages:12,backSwipeNavigates:true,visualValidationPerPage:true},mcpContentEditing:{getCard:true,paginatedDeck:true,search:true,patch:true,revisionGuarded:true},content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'none_automated_integrity_and_two_model_reports',mediaIngest:'direct_mcp_bytes_or_chunks',requiresHostTransferredFileId:false,manualApprovalRequired:false,chunkBytes:98304,preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
   case 'list_decks':return {decks:await listDecks(env.DB,owner)};
   case 'list_folders':return {folders:await listFolders(env.DB,owner)};
   case 'create_folder':return await createFolder(env,owner,args);
@@ -339,11 +357,16 @@ export async function callTool(name,env,owner,args={}){
   case 'list_due_cards':return await listDue(env,owner);
   case 'record_review':return await recordReview(env,owner,args);
   case 'undo_review':return await undoReview(env,owner,args);
-  case 'import_media_file':return await importMediaFile(env,owner,args);
+  case 'import_media_bytes':return await importMediaBytes(env,owner,args);
   case 'import_media_url':return await importMediaUrl(env,owner,args);
   case 'list_media':return {media:await listOwnerMedia(env,owner)};
+  case 'accept_legacy_media':return await acceptPendingMediaIntegrity(env,owner,required(args.mediaId,'mediaId'));
+  case 'attach_verified_visuals_batch':return await attachVerifiedVisualsBatch(env,owner,args);
+  case 'begin_media_upload':
   case 'app_begin_media_upload':return await beginChunkedUpload(env,owner,args);
+  case 'upload_media_chunk':
   case 'app_upload_media_chunk':return await appendChunkedUpload(env,owner,args);
+  case 'finish_media_upload':
   case 'app_finish_media_upload':return await finishChunkedUpload(env,owner,args);
   case 'app_get_media_chunk':return await readOwnerMediaChunk(env,owner,required(args.mediaId,'mediaId'),args.index);
   case 'app_purge_expired_media_uploads':return await purgeExpiredUploads(env,owner);
@@ -353,15 +376,39 @@ export async function callTool(name,env,owner,args={}){
   case 'list_visual_candidates':return {visualBindings:await listVisualCandidates(env,owner)};
   case 'get_card_visual_audit':return await inspectVisualBinding(env,owner,required(args.bindingId,'bindingId'));
   case 'attach_visual_to_card':return await attachCardVisual(env,owner,args);
-  case 'app_begin_visual_approval':return await beginVisualApproval(env,owner,required(args.bindingId,'bindingId'));
-  case 'app_approve_card_visual':return await approveCardVisual(env,owner,args);
   case 'app_snapshot':return await snapshot(env,owner);
-  case 'app_begin_media_review':return await issueMediaReviewChallenge(env,owner,args.mediaId);
-  case 'app_approve_media':return await approveOwnerMedia(env,owner,args.mediaId,args.attestation);
   case 'app_reject_media':return await rejectOwnerMedia(env,owner,args.mediaId);
   default:fail(`Unknown tool ${name}`,404);
  }
 }
+export async function attachVerifiedVisualsBatch(env,owner,args){
+ const batchId=required(args.operationId,'operationId',98);
+ if(!Array.isArray(args.items)||args.items.length<1||args.items.length>40)fail('Batch needs 1..40 image/card mappings');
+ const results=[];
+ for(let i=0;i<args.items.length;i++){
+  const item=args.items[i]||{};
+  const record={index:i,deckId:item.deckId,cardId:item.cardId,mediaId:item.mediaId};
+  try{
+   const deckId=required(item.deckId,'deckId'),cardId=required(item.cardId,'cardId'),mediaId=required(item.mediaId,'mediaId');
+   if(item.side && !['front','back'].includes(item.side))fail('Invalid side');
+   if(item.pageId && typeof item.pageId!=='string')fail('Invalid pageId');
+   // Retry is safe: skip an existing attached exact target, but never silently attach to a new location.
+   const attached=await env.DB.prepare("SELECT id FROM visual_bindings WHERE owner_id=? AND deck_id=? AND card_id=? AND media_id=? AND side=? AND COALESCE(page_id,'')=? AND status='attached'")
+    .bind(owner,deckId,cardId,mediaId,item.side||'back',item.pageId||'').first();
+   if(attached){results.push({...record,ok:true,alreadyAttached:true,bindingId:attached.id});continue;}
+   if(!item.sourceReport||!item.visualReport)fail('Two substantive inspection reports are required');
+   await acceptPendingMediaIntegrity(env,owner,mediaId);
+   const binding=await createCandidate(env,owner,{deckId,cardId,mediaId,side:item.side||'back',...(item.pageId?{pageId:item.pageId}:{})});
+   await submitSourceCheck(env,owner,{bindingId:binding.bindingId,report:item.sourceReport});
+   await submitVisualCheck(env,owner,{bindingId:binding.bindingId,report:item.visualReport});
+   const current=await ownedDeck(env.DB,owner,deckId);
+   const attachedResult=await attachCardVisual(env,owner,{bindingId:binding.bindingId,expectedRevision:current.revision,operationId:`${batchId}-${String(i).padStart(2,'0')}`});
+   results.push({...record,ok:true,...attachedResult});
+  }catch(e){results.push({...record,ok:false,error:String(e.message||e)});}
+ }
+ return {requested:args.items.length,attached:results.filter(r=>r.ok&&!r.alreadyAttached).length,alreadyAttached:results.filter(r=>r.alreadyAttached).length,failed:results.filter(r=>!r.ok).length,results};
+}
+
 function resultSuccess(data){return {content:[{type:'text',text:JSON.stringify(data)}],structuredContent:data};}
 function resultError(error){return {isError:true,content:[{type:'text',text:String(error?.message||error)}]};}
 export async function handleMcp(req,env){
@@ -370,7 +417,7 @@ export async function handleMcp(req,env){
  const id=rpc.id??null;let result;
  switch(rpc.method){
   case 'server/discover':result={supportedVersions:['2026-07-28'],capabilities:{tools:{},resources:{}}};break;
-  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.8.0'}};break;
+  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.10.0'}};break;
   case 'notifications/initialized':return new Response(null,{status:202});
   case 'ping':result={};break;
   case 'tools/list':result={tools:TOOLS};break;
@@ -384,7 +431,7 @@ export async function handleMcp(req,env){
   case 'tools/call':{
    const name=rpc.params?.name;
    if(!TOOLS.some(t=>t.name===name))result=resultError(new Error('Tool not found'));
-   else {try{result=resultSuccess(await callTool(name,env,owner,rpc.params?.arguments||{}));}catch(e){result=resultError(e);}}
+   else {try{if(name==='inspect_media_image'){const img=await readMediaForModel(env,owner,required(rpc.params?.arguments?.mediaId,'mediaId'));const {base64,...meta}=img;result={content:[{type:'image',data:base64,mimeType:img.mime},{type:'text',text:JSON.stringify(meta)}],structuredContent:meta};}else result=resultSuccess(await callTool(name,env,owner,rpc.params?.arguments||{}));}catch(e){result=resultError(e);}}
    break;
   }
   default:return replyJson({jsonrpc:'2.0',id,error:{code:-32601,message:'Method not found'}},200);
@@ -412,15 +459,11 @@ export async function handleApi(req,env){
   if(visualPath){
    const bindingId=visualPath[1],verb=visualPath[2];
    if(req.method==='GET'&&verb==='audit')return replyJson(await inspectVisualBinding(env,owner,bindingId));
-   if(req.method==='GET'&&verb==='challenge')return replyJson(await beginVisualApproval(env,owner,bindingId));
-   if(req.method==='POST'&&verb==='approve')return replyJson(await approveCardVisual(env,owner,{...await parseBody(req),bindingId}));
-   if(req.method==='POST'&&verb==='attach')return replyJson(await attachCardVisual(env,owner,{...await parseBody(req),bindingId}));
+     if(req.method==='POST'&&verb==='attach')return replyJson(await attachCardVisual(env,owner,{...await parseBody(req),bindingId}));
   }
  const m=path.match(/^\/api\/media\/([a-f0-9-]{36})(?:\/(approve|reject|challenge))?$/i);
  if(m){
   if(req.method==='GET'&&!m[2])return serveOwnerMedia(env,owner,m[1]);
-  if(req.method==='GET'&&m[2]==='challenge')return replyJson(await issueMediaReviewChallenge(env,owner,m[1]));
-  if(req.method==='POST'&&m[2]==='approve')return replyJson(await approveOwnerMedia(env,owner,m[1],await parseBody(req)));
   if(req.method==='POST'&&m[2]==='reject')return replyJson(await rejectOwnerMedia(env,owner,m[1]));
  }
  if(req.method==='POST'&&path==='/api/media/upload'){

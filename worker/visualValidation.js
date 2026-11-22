@@ -1,9 +1,9 @@
 /**
  * Card-bound double visual inspection. A model report is an auditable CLAIM,
  * not proof that a model actually viewed pixels or verified medical science.
- * Only the account-user's preview UI issues an approval challenge.
+ * Validated media and two independent workflow stages gate attachment; no manual approval click.
  */
-import {getOwnerMedia} from './media.js';
+import {getOwnerMedia,acceptPendingMediaIntegrity} from './media.js';
 
 const uuid=()=>crypto.randomUUID();
 const now=()=>new Date().toISOString();
@@ -22,10 +22,12 @@ async function bindingRow(env,owner,id){const row=await env.DB.prepare('SELECT *
 async function assertFresh(env,owner,b){
  const row=await cardRow(env,owner,b.deck_id,b.card_id);
  const currentHash=await semanticHash(row.card);
- const media=await getOwnerMedia(env,owner,b.media_id);
+ let media=await getOwnerMedia(env,owner,b.media_id);
+ // Historical pending media no longer require a human token: re-check the original R2 bytes automatically.
+ if(media.status==='pending'){await acceptPendingMediaIntegrity(env,owner,b.media_id);media=await getOwnerMedia(env,owner,b.media_id);}
  if(currentHash!==b.card_content_sha256||media.hash!==b.media_sha256||media.status!=='approved'){
   await env.DB.prepare("UPDATE visual_bindings SET status='stale',updated_at=? WHERE id=? AND owner_id=? AND status NOT IN ('stale','rejected')").bind(now(),b.id,owner).run();
-  error('Visual approval invalidated: card answer or source image changed',409);
+  error('Visual validation invalidated: card answer or source image changed',409);
  }
  return {row,media};
 }
@@ -46,15 +48,17 @@ function visualReport(input){
  if(input.recommendation!=='pass'||(input.problems?.length||0)>0)error('Visual needs rework or rejection');
  return {inspectedView:'final_stored_image',readability:'legible_at_phone_width',observedLabels:labels,supportedClaim:claim,countercheck,problems:[],recommendation:'pass'};
 }
-function summary(b){return {bindingId:b.id,deckId:b.deck_id,cardId:b.card_id,mediaId:b.media_id,status:b.status,side:b.side,pageId:b.page_id||null,mediaSha256:b.media_sha256,cardContentSha256:b.card_content_sha256,sourceCheckId:b.source_check_id,visualCheckId:b.visual_check_id,approvalId:b.approval_id,provenance:JSON.parse(b.provenance_json)};}
+function summary(b){return {bindingId:b.id,deckId:b.deck_id,cardId:b.card_id,mediaId:b.media_id,status:b.status,side:b.side,pageId:b.page_id||null,mediaSha256:b.media_sha256,cardContentSha256:b.card_content_sha256,sourceCheckId:b.source_check_id,visualCheckId:b.visual_check_id,provenance:JSON.parse(b.provenance_json)};}
 export async function createCandidate(env,owner,args){
  const deckId=str(args.deckId,'deckId',150),cardId=str(args.cardId,'cardId',150),mediaId=str(args.mediaId,'mediaId',150);
  const side=args.side||'back';if(!['front','back'].includes(side))error('Invalid visual side');
  const {card}=await cardRow(env,owner,deckId,cardId);
  const pageId=args.pageId||null;
  if(pageId&&(side!=='back'||!card.backPages?.some(p=>p.id===pageId)))error('Back page ID does not belong to the selected card');
- const media=await getOwnerMedia(env,owner,mediaId);
- if(media.status!=='approved')error('First approve actual image preview at asset level');
+ let media=await getOwnerMedia(env,owner,mediaId);
+ // Legacy v0.8 media must not require any approval step. Validate actual R2 bytes on first use.
+ if(media.status==='pending'){await acceptPendingMediaIntegrity(env,owner,mediaId);media=await getOwnerMedia(env,owner,mediaId);}
+ if(media.status!=='approved')error('Media bytes must pass storage integrity validation first');
  const contentHash=await semanticHash(card);const id=uuid(),t=now();
  await env.DB.prepare('INSERT INTO visual_bindings(id,owner_id,deck_id,card_id,media_id,media_sha256,card_content_sha256,side,page_id,provenance_json,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
   .bind(id,owner,deckId,cardId,mediaId,media.hash,contentHash,side,pageId,media.provenance_json,'candidate',t,t).run();
@@ -78,58 +82,33 @@ export async function submitVisualCheck(env,owner,args){
  await env.DB.batch([
   env.DB.prepare('INSERT INTO visual_checks(id,owner_id,binding_id,phase,media_sha256,card_content_sha256,report_json,actor_type,created_at,result) VALUES(?,?,?,?,?,?,?,?,?,?)')
    .bind(checkId,owner,b.id,'visual',b.media_sha256,b.card_content_sha256,JSON.stringify(report),'model_claim',t,'pass'),
-  env.DB.prepare("UPDATE visual_bindings SET visual_check_id=?,status='awaiting_user_approval',updated_at=? WHERE id=? AND owner_id=? AND status='source_checked'").bind(checkId,t,b.id,owner)
+  env.DB.prepare("UPDATE visual_bindings SET visual_check_id=?,status='approved_for_card',updated_at=? WHERE id=? AND owner_id=? AND status='source_checked'").bind(checkId,t,b.id,owner)
  ]);
  return summary(await bindingRow(env,owner,b.id));
 }
 export async function listVisualCandidates(env,owner){
- const rows=(await env.DB.prepare("SELECT * FROM visual_bindings WHERE owner_id=? AND status IN ('candidate','source_checked','awaiting_user_approval','approved_for_card','attached','stale','rejected') ORDER BY created_at DESC LIMIT 250").bind(owner).all()).results;
+ const rows=(await env.DB.prepare("SELECT * FROM visual_bindings WHERE owner_id=? AND status IN ('candidate','source_checked','approved_for_card','attached','stale','rejected') ORDER BY created_at DESC LIMIT 250").bind(owner).all()).results;
  return rows.map(summary);
 }
 export async function inspectVisualBinding(env,owner,id){
  const b=await bindingRow(env,owner,id);const checks=(await env.DB.prepare('SELECT id,phase,actor_type,report_json,created_at,result FROM visual_checks WHERE owner_id=? AND binding_id=? ORDER BY created_at').bind(owner,id).all()).results;
  return {...summary(b),checks:checks.map(x=>({...x,report:JSON.parse(x.report_json),report_json:undefined})),imagePath:`/api/media/${b.media_id}`};
 }
-async function tokenHash(s){return digest(enc.encode(s));}
-export async function beginVisualApproval(env,owner,id){
- const b=await bindingRow(env,owner,id);
- if(b.status!=='awaiting_user_approval'||!b.source_check_id||!b.visual_check_id)error('Both source and visual checks must pass first');
- await assertFresh(env,owner,b);
- const token=uuid()+'-'+uuid(),expiresAt=new Date(Date.now()+15*60_000).toISOString();
- await env.DB.prepare('INSERT INTO visual_approval_challenges(binding_id,owner_id,token_hash,card_content_sha256,media_sha256,expires_at) VALUES(?,?,?,?,?,?) ON CONFLICT(binding_id) DO UPDATE SET token_hash=excluded.token_hash,card_content_sha256=excluded.card_content_sha256,media_sha256=excluded.media_sha256,expires_at=excluded.expires_at')
-  .bind(id,owner,await tokenHash(token),b.card_content_sha256,b.media_sha256,expiresAt).run();
- return {bindingId:id,challenge:token,expiresAt};
-}
-export async function approveCardVisual(env,owner,args){
- const b=await bindingRow(env,owner,str(args.bindingId,'bindingId',150));
- if(b.status!=='awaiting_user_approval')error('Source and visual checks are not ready for approval');
- const {row}=await assertFresh(env,owner,b);
- const t=await env.DB.prepare('SELECT * FROM visual_approval_challenges WHERE binding_id=? AND owner_id=?').bind(b.id,owner).first();
- if(!t||t.expires_at<=now()||t.card_content_sha256!==b.card_content_sha256||t.media_sha256!==b.media_sha256||t.token_hash!==await tokenHash(String(args.challenge||'')))error('Preview challenge expired or invalid');
- if(args.imageRendered!==true||args.sourceMatches!==true||args.labelsLegible!==true||args.contentRelevant!==true)error('User must confirm preview and all three checks');
- const note=str(args.note,'review note',600,20),approvalId=uuid(),at=now();
- await env.DB.batch([
-  env.DB.prepare('INSERT INTO visual_approvals(id,owner_id,binding_id,media_sha256,card_content_sha256,note,created_at) VALUES(?,?,?,?,?,?,?)').bind(approvalId,owner,b.id,b.media_sha256,b.card_content_sha256,note,at),
-  env.DB.prepare("UPDATE visual_bindings SET status='approved_for_card',approval_id=?,updated_at=? WHERE id=? AND owner_id=? AND status='awaiting_user_approval'").bind(approvalId,at,b.id,owner),
-  env.DB.prepare('DELETE FROM visual_approval_challenges WHERE binding_id=? AND owner_id=?').bind(b.id,owner)
- ]);
- return {...summary(await bindingRow(env,owner,b.id)),cardTitle:row.card.front?.find(x=>x.type==='text')?.text};
-}
 export async function attachCardVisual(env,owner,args){
  const id=str(args.bindingId,'bindingId',150),opId=str(args.operationId,'operationId',120);
  const previous=await env.DB.prepare('SELECT result_json FROM operations WHERE owner_id=? AND id=?').bind(owner,opId).first();
  if(previous){const receipt=JSON.parse(previous.result_json);if(receipt.bindingId!==id||receipt.revision-1!==args.expectedRevision)error('Operation ID already used for a different mutation',409);return receipt;}
- const b=await bindingRow(env,owner,id);
- if(b.status!=='approved_for_card')error('Image is not approved for this exact card');
+ let b=await bindingRow(env,owner,id);
+ if(b.status!=='approved_for_card')error('Both source and visual checks must pass before attachment');
  const {row,media}=await assertFresh(env,owner,b);
  if(row.deck_revision!==args.expectedRevision)error('Deck revision changed; refresh and retry',409);
- const prior=await env.DB.prepare('SELECT * FROM visual_approvals WHERE id=? AND owner_id=? AND binding_id=? AND revoked_at IS NULL').bind(b.approval_id,owner,id).first();
- if(!prior||prior.media_sha256!==media.hash||prior.card_content_sha256!==b.card_content_sha256)error('Matching human approval is missing');
+ const checks=(await env.DB.prepare('SELECT id,phase,result,media_sha256,card_content_sha256 FROM visual_checks WHERE owner_id=? AND binding_id=? AND id IN (?,?)').bind(owner,id,b.source_check_id||'',b.visual_check_id||'').all()).results;
+ if(!b.source_check_id||!b.visual_check_id||checks.length!==2||!['source','visual'].every(phase=>checks.some(x=>x.phase===phase&&x.result==='pass'&&x.media_sha256===media.hash&&x.card_content_sha256===b.card_content_sha256)))error('Both matching visual validation reports are required');
  const front=Array.isArray(row.card.front)?[...row.card.front]:[],back=Array.isArray(row.card.back)?[...row.card.back]:[];
  const backPages=(row.card.backPages||[]).map(p=>({...p,blocks:[...p.blocks]}));
  let side=b.side==='front'?front:back;
  if(b.page_id){const p=backPages.find(p=>p.id===b.page_id);if(!p)error('Approved page no longer exists',409);side=p.blocks;}
- if(!side.some(x=>x.type==='image'&&x.assetId===b.media_id))side.push({type:'image',assetId:b.media_id,alt:JSON.parse(media.provenance_json).description||'Sumber visual yang disetujui'});
+ if(!side.some(x=>x.type==='image'&&x.assetId===b.media_id))side.push({type:'image',assetId:b.media_id,alt:JSON.parse(media.provenance_json).description||'Sumber visual yang telah diperiksa'});
  const next={...row.card,front,back,...(row.card.backPages?{backPages}:{})};const at=now(),nonce=uuid();
  const receipt={bindingId:id,deckId:b.deck_id,cardId:b.card_id,mediaId:b.media_id,revision:row.deck_revision+1,attached:true};
  await env.DB.batch([
@@ -150,14 +129,14 @@ export async function assertNoUnapprovedImages(env,owner,deckId,cardId,newCard){
  ];
  const images=locate(newCard);
  if(!images.length)return;
- if(!deckId||!cardId)error('Images must be added after card creation via visual approval, not directly in create_deck/append_cards');
+ if(!deckId||!cardId)error('Images must pass card-specific source and visual checks, not be inserted directly in create_deck/append_cards');
  const existing=await cardRow(env,owner,deckId,cardId);
  const hash=await semanticHash(newCard);
  if(hash!==(await semanticHash(existing.card)))error('Changing a card answer requires removing attached images and running new visual checks');
  const oldImages=locate(existing.card);
  for(const image of images){
   const index=oldImages.findIndex(x=>x.assetId===image.assetId&&x.alt===image.alt&&x.pageId===image.pageId&&x.side===image.side);
-  if(index<0)error('Direct media attachment bypasses card-specific visual approval');
+  if(index<0)error('Direct media attachment bypasses card-specific visual validation');
   oldImages.splice(index,1);
   const binding=await env.DB.prepare("SELECT id FROM visual_bindings WHERE owner_id=? AND deck_id=? AND card_id=? AND media_id=? AND side=? AND COALESCE(page_id,'')=? AND status='attached' AND card_content_sha256=?").bind(owner,deckId,cardId,image.assetId,image.side,image.pageId||'',hash).first();
   if(!binding)error('Card image lacks an attached double-checked visual binding');

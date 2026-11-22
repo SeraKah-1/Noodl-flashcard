@@ -33,7 +33,7 @@ async def main():
     if(window._uploaded.length!==window._expected)throw Error('received size wrong');
     const digest=await crypto.subtle.digest('SHA-256',Uint8Array.from(window._uploaded,c=>c.charCodeAt(0)));
     const hash=Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,'0')).join('');
-    return {structuredContent:{id:'00000000-0000-4000-8000-000000000099',status:'pending',width:300,height:200,bytes:window._uploaded.length,mime:'image/png',sha256:hash,provenance:{kind:'manual',origin:'slide-06.png'},visualReview:{observation:'requires human review',legible:false,relevant:false}}};
+    return {structuredContent:{id:'00000000-0000-4000-8000-000000000099',status:'approved',width:300,height:200,bytes:window._uploaded.length,mime:'image/png',sha256:hash,provenance:{kind:'manual',origin:'slide-06.png'},visualReview:{observation:'source + visual pairing required per card',legible:false,relevant:false}}};
    }
    throw Error('unexpected tool '+name);
   }};''')
@@ -46,16 +46,16 @@ async def main():
   data=await page.evaluate('({calls:window._calls,bytes:window._uploaded.length,count:window.__testState.media.length,status:window.__testState.media[0]?.status,expected:window._expected,rehydrated:window.__testState.media[0]?.dataUrl?.length})')
   assert data['bytes']==file.stat().st_size,data
   assert data['bytes']==data['expected'],data
-  assert data['count']==1 and data['status']=='pending',data
+  assert data['count']==1 and data['status']=='approved',data
   assert data['calls'][0]=='app_begin_media_upload' and 'app_finish_media_upload' in data['calls'] and all(x in ['app_upload_media_chunk','app_get_media_chunk'] for x in data['calls'][1:] if x!='app_finish_media_upload'),data
   assert len(data['calls'])>=3 and data['rehydrated']>data['bytes'],data
   assert await page.evaluate('atob(window.__testState.media[0].dataUrl.split(",")[1])===window._uploaded'), 'Reconstructed bytes differ' 
   await page.locator('[data-preview]').click()
   await page.locator('#fullPreview').wait_for()
   assert await page.locator('#fullPreview').evaluate('(img)=>img.complete&&img.naturalWidth>30'), 'Preview must decode actual slide'
-  assert await page.locator('#approveForm input[type=checkbox]').count()==3
+  assert await page.locator('#approveForm').count()==0, 'Manual approval must not be present'
   await page.screenshot(path='/mnt/data/noodl-flashcards-v0.4-upload-preview.png',full_page=True)
   assert not errors,errors
-  print('PASS real browser file picker -> base64 chunk MCP -> pending image; no native host transfer available',data)
+  print('PASS real browser file picker -> base64 chunk MCP -> stored image without manual approval; no native host transfer available',data)
   await browser.close()
 if __name__=='__main__':asyncio.run(main())

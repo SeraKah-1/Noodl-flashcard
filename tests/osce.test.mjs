@@ -60,7 +60,7 @@ test('SQLite/MCP persists procedural deck and preserves existing cards, revision
 test('OSCE does not bypass image approval or rewrite normal deck rules',async()=>{
  const DB=db(),env={DB};
  const imageCard=step(1,{back:[{type:'text',text:'Action'},{type:'image',assetId:'fake',alt:'Wrong item'}]});
- await assert.rejects(callTool('create_deck',env,'alice',{operationId:'osce-image',title:'OSCE',cards:[imageCard]}),/Images must be added after card creation/);
+ await assert.rejects(callTool('create_deck',env,'alice',{operationId:'osce-image',title:'OSCE',cards:[imageCard]}),/Images must pass card-specific/);
  assert.throws(()=>validateCard({...standard(),clues:[]}),/Exactly three clues/);
  const created=await callTool('create_deck',env,'alice',{operationId:'normal-create',title:'Normal',cards:[standard()]});
  await assert.rejects(callTool('append_cards',env,'alice',{operationId:'normal-add-osce',deckId:created.deckId,expectedRevision:1,cards:[step(1)]}),/Cannot mix/);

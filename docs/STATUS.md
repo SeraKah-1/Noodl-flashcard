@@ -1,3 +1,11 @@
+**Current local release v0.10:** Direct MCP byte/chunk ingress; no host file ID and no manual image approval. See `docs/DIRECT_MCP_MEDIA_v0.10.md`. Older content below is historical.
+
+# v0.9 status update
+
+Local source implements no-human-approval media ingestion and batch A/B check and attachment. Client plugin was v0.8.0 at last inspection and media storage was empty. Do not claim live integration. The SKILL LAB atlas was found in Library but its raw bytes could not be materialized in this session. Deployment and actual 32-image transfer remain unverified.
+
+---
+
 # Implementation verification ledger — 21 November 2026
 
 **Verified source prototype**, NOT a deployed ChatGPT plugin. Original repos untouched. New GitHub repository is not created by this work: the available GitHub connection cannot create a repository.

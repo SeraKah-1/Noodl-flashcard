@@ -13,7 +13,7 @@ function mockEnv(){
 function png(size=500){const b=new Uint8Array(size);b.set([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,1,44,0,0,0,200]);return b;}
 const b64=data=>Buffer.from(data).toString('base64');
 const src={kind:'slide',origin:'Serologi Tifoid slide 6',sourcePage:6};
-test('chunk importer reassembles actual file, quarantines image, and preserves owner',async()=>{
+test('chunk importer reassembles actual file, validates and stores image without approval, and preserves owner',async()=>{
  const env=mockEnv(),bytes=png(CHUNK_BYTES+128);
  const start=await beginChunkedUpload(env,'alice',{byteLength:bytes.length,mimeType:'image/png',fileName:'slide06.png',provenance:src});
  assert.equal(start.chunkBytes,CHUNK_BYTES);
@@ -23,7 +23,7 @@ test('chunk importer reassembles actual file, quarantines image, and preserves o
  await assert.rejects(finishChunkedUpload(env,'alice',{uploadId:start.uploadId}),/incomplete/);
  await appendChunkedUpload(env,'alice',{uploadId:start.uploadId,index:1,base64:b64(bytes.slice(CHUNK_BYTES))});
  const out=await finishChunkedUpload(env,'alice',{uploadId:start.uploadId});
- assert.equal(out.status,'pending');assert.equal(out.width,300);assert.equal(out.bytes,bytes.length);assert.equal(out.provenance.sourcePage,6);
+ assert.equal(out.status,'approved');assert.equal(out.width,300);assert.equal(out.bytes,bytes.length);assert.equal(out.provenance.sourcePage,6);
  assert.equal(env.stored.size,1);assert.equal(env.sqlite.prepare('SELECT COUNT(*) AS n FROM media_uploads').get().n,0);
  const fetched=await callTool('list_media',env,'alice',{});assert.equal(fetched.media.length,1);
  const chunks=[];for(let index=0;index<2;index++)chunks.push(await readOwnerMediaChunk(env,'alice',out.id,index));
@@ -45,5 +45,5 @@ test('real MCP registry supplies no-host-file upload alternative and keeps it ap
  for(const name of ['app_begin_media_upload','app_upload_media_chunk','app_finish_media_upload','app_get_media_chunk']){
   const t=TOOLS.find(t=>t.name===name);assert(t,`${name} missing`);assert.deepEqual(t._meta.ui.visibility,['app']);
  }
- const importFile=TOOLS.find(t=>t.name==='import_media_file');assert.deepEqual(importFile._meta['openai/fileParams'],['file']);
+ const direct=TOOLS.find(t=>t.name==='import_media_bytes');assert(direct);assert(!TOOLS.some(t=>t._meta?.['openai/fileParams']));
 });

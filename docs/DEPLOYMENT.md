@@ -1,3 +1,11 @@
+**v0.10 IMPORTANT:** Follow [`DIRECT_MCP_MEDIA_v0.10.md`](DIRECT_MCP_MEDIA_v0.10.md), migration `0006_retire_media_approval.sql`, and v0.10 production acceptance checks. Older deployment notes below may reference obsolete host-transfer/approval mechanisms.
+
+# CURRENT: v0.9 deployment instructions
+
+Follow [AUTO_MEDIA_v0.9.md](AUTO_MEDIA_v0.9.md) for the current protocol. **Historical instructions below for v0.3–v0.8 contain obsolete manual approval steps; do not use them when deploying v0.9.**
+
+---
+
 # Deployment and release gates
 
 The local demo is independent of a cloud account. Production depends on a **new** authenticated ChatGPT Sites project with fresh durable resources. Do not reuse source project IDs, D1 databases, R2 buckets or user data without a separately authorized migration.

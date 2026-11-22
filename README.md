@@ -1,3 +1,41 @@
+# Noodl Flashcards v0.10 — Direct Media, No Human/Host Gate
+
+**This release changes the image-ingestion architecture.** The old host-transferred `file_id` tool is **removed**, not kept as the preferred path: the embedded panel sends real image bytes directly through MCP chunks. ChatGPT can also call `import_media_bytes` for small images or the same chunk tools for larger ones. No one-time human approval tokens or image/card confirmation buttons remain. Server-side authentication, byte integrity and card-specific source/pixel checks stay mandatory.
+
+See **[Direct MCP Media v0.10](docs/DIRECT_MCP_MEDIA_v0.10.md)** for the exact tools, migration, production verification, and limitations. Legacy release notes below are historical and *do not* describe the current media path.
+
+Run: `npm run check && npm test` (Node.js 22+). Browser smoke tests: `python scripts/smoke_chunk_upload.py`, `python scripts/smoke_browser.py`, `python scripts/smoke_deep_cards.py` (Chromium + Playwright).
+
+**Deployment status:** source and local browser simulation only. The connected production MCP/Worker still needs a deliberate deployment to these exact code bytes and the same D1/R2 storage; `full_access` permission alone does not deploy the code or grant the Worker access to invisible ChatGPT Library file bytes.
+
+---
+
+# Noodl Flashcards v0.9 — Auto Media + Full MCP Content Editor
+
+**Local source release, not the connected production plugin.**
+
+- **No human media approval screens or approval MCP tools.** Verified-format PNG/JPEG/WebP can be stored immediately; per-card attachment still requires two model-reported checks of source and final pixels.
+- **Actual-image MCP inspection:** `inspect_media_image` sends owner-authenticated stored image pixels to ChatGPT as an image block with SHA-256/provenance, so ChatGPT can inspect rather than relying solely on filenames.
+- **Batch attachment:** `attach_verified_visuals_batch` handles up to 40 card–image associations per operation; preserves existing 17 SKILL LAB decks / 351 cards and review IDs if deployed to the same D1/R2.
+- **Host file transfer fallback:** `begin_media_upload` → `upload_media_chunk` → `finish_media_upload` for real Base64 bytes; embedded Settings still supports selecting many PNG/JPEG/WebP images in one operation. `import_media_file` no longer rejects a valid download URL solely for a missing host `file_id`.
+- **No AI-provider key inside Noodl.** ChatGPT authors cards, validates image relevance, reads/patches Deep Cards via MCP.
+- **Owner isolation, visual content/hash/revision checks, remote HTTPS allowlist, explicit provenance, and offline-safe review history are preserved.**
+- **The old v0.8 approval screens and tool actions have been removed.** Previous image approval database tables are left unused for safe upgrades.
+
+[Full technical workflow, examples and deployment instructions](docs/AUTO_MEDIA_v0.9.md).
+
+```bash
+npm run check
+npm test
+npm run dev
+```
+
+This code does not itself upload the 32 SKILL LAB images into the connected app. Deployment needs the existing trusted Cloudflare Worker/D1/R2 and refreshed ChatGPT MCP registry. Once connected, successful import and attachment must be independently confirmed using `list_media` and `get_deck`.
+
+---
+
+## Historical release notes (v0.1–v0.8; older manual-approval instructions below are superseded by v0.9)
+
 # Noodl Flashcards
 
 **Flashcards only. ChatGPT makes content; Noodl saves and reviews it.**

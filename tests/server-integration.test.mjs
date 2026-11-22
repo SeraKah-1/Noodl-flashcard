@@ -24,5 +24,5 @@ test('real SQLite: create, retry, revision-guarded append and account isolation'
 test('direct image block is forbidden even if asset is already approved',async()=>{
  const DB=memoryD1(),env={DB};
  DB.sqlite.prepare(`INSERT INTO media(id,owner_id,storage_key,mime,width,height,bytes,hash,status,provenance_json,visual_review_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run('fake-image','alice','a','image/png',300,200,100,'hash','approved','{"kind":"manual","origin":"slide.png"}','{"observation":"pending"}','2026-11-21');
- for(const owner of ['alice','bob'])await assert.rejects(callTool('create_deck',env,owner,{operationId:'direct-'+owner,title:'A',cards:[{...card(1),front:[{type:'image',assetId:'fake-image',alt:'Diagram'}]}]}),/Images must be added after card creation/);
+ for(const owner of ['alice','bob'])await assert.rejects(callTool('create_deck',env,owner,{operationId:'direct-'+owner,title:'A',cards:[{...card(1),front:[{type:'image',assetId:'fake-image',alt:'Diagram'}]}]}),/Images must pass card-specific/);
 });

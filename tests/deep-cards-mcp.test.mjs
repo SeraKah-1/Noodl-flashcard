@@ -5,7 +5,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {callTool} from '../worker/index.js';
 import {validateCard} from '../worker/validation.js';
 import {backPagesFor,nextBackPage} from '../shared/logic.js';
-import {storePendingImage,issueMediaReviewChallenge,approveOwnerMedia} from '../worker/media.js';
+import {storePendingImage} from '../worker/media.js';
 import {semanticHash} from '../worker/visualValidation.js';
 
 const clues=[5,10,15].map(atSecond=>({atSecond,text:'Bantuan langkah '+atSecond}));
@@ -67,20 +67,16 @@ test('MCP patch supports insert/remove/reorder with strict page IDs and no direc
  assert.deepEqual((await callTool('get_card_content',service,'alice',{deckId,cardId})).card.backPages.map(p=>p.id),['normal','abnormal','technique']);
 });
 
-test('per-page image gate: reject bypass, require A+B+human, attach only approved target page',async()=>{
+test('per-page image gate: reject bypass, require A+B no human click, attach only approved target page',async()=>{
  const {service,deckId,deck}=await prepare();const cardId=deck.cards[0].id;
  const png=new Uint8Array(readFileSync('tests/fixtures/axon-sample.png'));
  const media=await storePendingImage(service,'alice',png,{kind:'slide',origin:'neuro.pdf',sourcePage:6,description:'Myelin diagram'},{observation:'Myelin diagram visible and the axon is labeled on the original PDF slide.',legible:true,relevant:true});
- const ch=await issueMediaReviewChallenge(service,'alice',media.id);
- await approveOwnerMedia(service,'alice',media.id,{challenge:ch.challenge,imageRendered:true,sourceMatches:true,labelsLegible:true,contentRelevant:true,note:'Rendered final PNG matches slide and all labels remain legible.'});
  await assert.rejects(callTool('create_visual_candidate',service,'alice',{deckId,cardId,mediaId:media.id,pageId:'missing'}),/Back page ID/);
  const binding=await callTool('create_visual_candidate',service,'alice',{deckId,cardId,mediaId:media.id,side:'back',pageId:'normal'});
  assert.equal(binding.pageId,'normal');
- await assert.rejects(callTool('attach_visual_to_card',service,'alice',{operationId:'direct-bypass',bindingId:binding.bindingId,expectedRevision:1}),/not approved/);
+ await assert.rejects(callTool('attach_visual_to_card',service,'alice',{operationId:'direct-bypass',bindingId:binding.bindingId,expectedRevision:1}),/Both source and visual checks/);
  await callTool('submit_source_check',service,'alice',{bindingId:binding.bindingId,report:sourceReport});
  await callTool('submit_visual_check',service,'alice',{bindingId:binding.bindingId,report:visualReport});
- const token=await callTool('app_begin_visual_approval',service,'alice',{bindingId:binding.bindingId});
- await callTool('app_approve_card_visual',service,'alice',{bindingId:binding.bindingId,challenge:token.challenge,imageRendered:true,sourceMatches:true,labelsLegible:true,contentRelevant:true,note:'Reviewed exact page against original and relevant labels.'});
  const attached=await callTool('attach_visual_to_card',service,'alice',{bindingId:binding.bindingId,expectedRevision:1,operationId:'page-attach'});assert.equal(attached.revision,2);
  const after=(await callTool('get_card_content',service,'alice',{deckId,cardId})).card;
  assert.equal(after.backPages[1].blocks.at(-1).assetId,media.id);assert.equal(after.back.some(b=>b.type==='image'),false);assert.equal(after.backPages[0].blocks.some(b=>b.type==='image'),false);
