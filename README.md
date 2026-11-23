@@ -2,7 +2,7 @@
 
 Noodl Flashcards adalah aplikasi flashcard untuk menyimpan dan meninjau kartu yang dibuat bersama ChatGPT. Versi kode ini adalah **v0.11.0**. Aplikasi mendukung deck dan folder, review dengan timer dan riwayat, kartu teks, Deep Cards, serta gambar opsional di sisi depan dan belakang kartu.
 
-- **Repo GitHub** · [SeraKah-1/noodl-flashcards](https://github.com/SeraKah-1/noodl-flashcards)
+- **Repo GitHub** · [SeraKah-1/Noodl-flashcard](https://github.com/SeraKah-1/Noodl-flashcard)
 - **Aplikasi di ChatGPT Sites** · [Noodl Flashcards](https://noodl-flashcards.sire-e.chatgpt.site)
 - **Sumber impor** · ChatGPT Sites versi 10, commit `0c095ac4eac956a6a36a763d6969417986645187`
 
