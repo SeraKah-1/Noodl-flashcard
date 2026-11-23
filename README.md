@@ -1,4 +1,37 @@
-# Noodl Flashcards v0.11 — Optional Visual Front & Back
+# Noodl Flashcards
+
+Noodl Flashcards adalah aplikasi flashcard untuk menyimpan dan meninjau kartu yang dibuat bersama ChatGPT. Versi kode ini adalah **v0.11.0**. Aplikasi mendukung deck dan folder, review dengan timer dan riwayat, kartu teks, Deep Cards, serta gambar opsional di sisi depan dan belakang kartu.
+
+- **Repo GitHub** · [SeraKah-1/noodl-flashcards](https://github.com/SeraKah-1/noodl-flashcards)
+- **Aplikasi di ChatGPT Sites** · [Noodl Flashcards](https://noodl-flashcards.sire-e.chatgpt.site)
+- **Sumber impor** · ChatGPT Sites versi 10, commit `0c095ac4eac956a6a36a763d6969417986645187`
+
+## Mulai di sini untuk agen AI
+
+| Jika tugasnya menyangkut | Baca dulu |
+| --- | --- |
+| UI belajar, navigasi deck, dan state review | [public/app.js](public/app.js), [public/index.html](public/index.html), [public/styles.css](public/styles.css) |
+| Aturan review dan kebijakan media bersama | [shared/logic.js](shared/logic.js), [shared/mediaPolicy.js](shared/mediaPolicy.js) |
+| API, autentikasi, dan alat MCP | [worker/index.js](worker/index.js), [docs/MCP_WORKFLOW.md](docs/MCP_WORKFLOW.md), [tests/mcp.test.mjs](tests/mcp.test.mjs) |
+| Gambar depan/belakang dan alur unggah | [Spesifikasi v0.11](docs/OPTIONAL_VISUAL_CARDS_v0.11.md), [contoh payload](examples/OPTIONAL_VISUAL_CARDS_v0.11.json), [alur Direct MCP Media](docs/DIRECT_MCP_MEDIA_v0.10.md) |
+| Penyimpanan D1 dan R2 serta deployment | [migrations/](migrations/), [wrangler.jsonc.example](wrangler.jsonc.example), [panduan deployment](docs/DEPLOYMENT.md) |
+
+Gunakan kode dan pengujian versi saat ini untuk memeriksa perilaku aplikasi sebelum mengandalkan catatan rilis lama di bawah. Untuk tugas yang menyentuh data tersimpan, pertahankan kompatibilitas kartu teks dan deck OSCE yang sudah ada. Periksa akses ke aplikasi dan alat MCP secara terpisah dari akses ke repo GitHub.
+
+## Menjalankan dan memeriksa secara lokal
+
+Gunakan Node.js 22 atau lebih baru. Jalankan perintah dari root repo.
+
+```bash
+npm run dev
+npm run check
+npm test
+npm run build
+```
+
+## Catatan rilis yang diimpor
+
+### v0.11 — Optional Visual Front & Back
 
 **Phase A+B is implemented in source.** Front and back images can be attached via the existing authenticated MCP visual checks, while **all text-only cards remain valid without any media requirement**. Image zoom/pan, required-question-image guard, missing-file checks and `get_card_media_status` are included. No Image Occlusion, Source Notes, Cloze, FSRS, or Anki `.apkg` support has been added yet.
 
