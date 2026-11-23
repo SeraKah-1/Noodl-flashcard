@@ -1,3 +1,9 @@
+# Current local source status: v0.11
+
+Added optional visual policy, visual-front selection, in-modal pan/zoom, explicit required-question-image readiness and server-enforced review guard, and a consolidated image collector for front/back/Deep Cards. Source packaging does not change connected Site/DB until deployed. See [v0.11 details](OPTIONAL_VISUAL_CARDS_v0.11.md).
+
+---
+
 **Current local release v0.10:** Direct MCP byte/chunk ingress; no host file ID and no manual image approval. See `docs/DIRECT_MCP_MEDIA_v0.10.md`. Older content below is historical.
 
 # v0.9 status update

@@ -1,0 +1,25 @@
+{
+  "exampleOnly": true,
+  "warning": "Educational schema samples. No image IDs or medical diagnoses are claimed to exist in a production account.",
+  "cards": [
+    {
+      "front": [{"type": "text", "text": "Apa fungsi insulin?"}],
+      "back": [{"type": "text", "text": "Mengatur metabolisme glukosa."}],
+      "clues": [{"atSecond": 5, "text": "Hormon"}, {"atSecond": 10, "text": "Pankreas"}, {"atSecond": 15, "text": "Sel beta"}]
+    },
+    {
+      "front": [{"type": "text", "text": "Sebutkan hal yang harus diperiksa sebelum menilai radiograf."}],
+      "back": [{"type": "text", "text": "Orientasi, identitas, proyeksi, dan kualitas teknis sesuai protokol."}],
+      "mediaRequirement": "optional",
+      "clues": [{"atSecond": 5, "text": "Identitas"}, {"atSecond": 10, "text": "Proyeksi"}, {"atSecond": 15, "text": "Kualitas"}]
+    },
+    {
+      "front": [{"type": "text", "text": "Identifikasi struktur yang ditunjukkan oleh gambar asli."}],
+      "back": [{"type": "text", "text": "Jawaban mengikuti struktur berlabel pada gambar terverifikasi."}],
+      "mediaRequirement": "required_for_question",
+      "clues": [{"atSecond": 5, "text": "Lihat anatomi"}, {"atSecond": 10, "text": "Orientasi"}, {"atSecond": 15, "text": "Bandingkan sekeliling"}],
+      "readyForStudy": false,
+      "note": "The image must be attached to FRONT with source+visual checks before this card can be reviewed."
+    }
+  ]
+}

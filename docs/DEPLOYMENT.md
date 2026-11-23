@@ -1,3 +1,11 @@
+# v0.11 deployment addendum
+
+Upgrade Worker, `public/`, `shared/mediaPolicy.js`, and the MCP registry together. Keep current trusted Site identity proxy, D1 and R2 bindings; run no new SQL migration for this release. Verify `get_capabilities().version === "0.11.0"`, and that `get_card_media_status` exists among `tools/list`. See [the full v0.11 acceptance checklist](OPTIONAL_VISUAL_CARDS_v0.11.md).
+
+Do not interpret local tests or tool schema changes as evidence that 32 SKILL LAB images have been uploaded to production.
+
+---
+
 **v0.10 IMPORTANT:** Follow [`DIRECT_MCP_MEDIA_v0.10.md`](DIRECT_MCP_MEDIA_v0.10.md), migration `0006_retire_media_approval.sql`, and v0.10 production acceptance checks. Older deployment notes below may reference obsolete host-transfer/approval mechanisms.
 
 # CURRENT: v0.9 deployment instructions

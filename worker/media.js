@@ -1,3 +1,4 @@
+import {imageReferences,frontImageIds,mediaRequirementOf} from '../shared/mediaPolicy.js';
 import {validateProvenance,validateVisualReview} from './validation.js';
 const MAX_BYTES=4_000_000;
 const MAX_PIXELS=12_000_000;
@@ -133,6 +134,23 @@ export async function rejectOwnerMedia(env,owner,id){
  return {id,status:'rejected'};
 }
 export async function assertAllApprovedMedia(env,owner,cards){
- const ids=new Set();for(const c of cards){for(const block of [...c.front,...c.back])if(block.type==='image')ids.add(block.assetId);}
+ const ids=new Set(cards.flatMap(card=>imageReferences(card).map(b=>b.assetId)));
  for(const id of ids){const row=await getOwnerMedia(env,owner,id);if(row.status!=='approved')throw Error(`Image ${id} must pass stored-byte integrity validation`);}
+}
+/** A question image is optional on legacy cards, but an explicitly required visual must be real.
+ * This is enforced again at review-write time; clients cannot bypass it by sending a rating.
+ */
+export async function cardVisualReadiness(env,owner,card){
+ const requirement=mediaRequirementOf(card),ids=frontImageIds(card);
+ if(requirement!=='required_for_question')return {requirement,ready:true,requiredImageIds:[],missingImageIds:[]};
+ const missing=[];
+ for(const id of ids){
+  let row;
+  try{row=await getOwnerMedia(env,owner,id);}catch{missing.push(id);continue;}
+  if(row.status!=='approved'){missing.push(id);continue;}
+  const object=await env.MEDIA.head(row.storage_key);
+  if(!object)missing.push(id);
+ }
+ const ready=ids.length>0&&missing.length===0;
+ return {requirement,ready,requiredImageIds:ids,missingImageIds:missing,reason:ready?null:ids.length?'media_missing_or_unapproved':'no_front_image_attached'};
 }

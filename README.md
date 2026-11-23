@@ -1,3 +1,20 @@
+# Noodl Flashcards v0.11 — Optional Visual Front & Back
+
+**Phase A+B is implemented in source.** Front and back images can be attached via the existing authenticated MCP visual checks, while **all text-only cards remain valid without any media requirement**. Image zoom/pan, required-question-image guard, missing-file checks and `get_card_media_status` are included. No Image Occlusion, Source Notes, Cloze, FSRS, or Anki `.apkg` support has been added yet.
+
+Full specifications, end-to-end pipeline, edge cases and safe deployment: **[Optional Visual Cards v0.11](docs/OPTIONAL_VISUAL_CARDS_v0.11.md)**. Sample payloads: **[examples/OPTIONAL_VISUAL_CARDS_v0.11.json](examples/OPTIONAL_VISUAL_CARDS_v0.11.json)**.
+
+```bash
+npm run check
+npm test
+python scripts/smoke_visual_front_v011.py
+python scripts/smoke_deep_cards.py
+```
+
+**Production warning:** this archive does not deploy the worker or import any user images. Keep the existing D1 database and R2 bucket when upgrading, then refresh MCP tool discovery. No new database migration is required beyond existing v0.10.1 migrations.
+
+---
+
 # Noodl Flashcards v0.10.1 — Direct Media, No Human/Host Gate
 
 **This release changes the image-ingestion architecture.** The old host-transferred `file_id` tool is **removed**, not kept as the preferred path: the embedded panel sends real image bytes directly through MCP chunks. ChatGPT can also call `import_media_bytes` for small images or the same chunk tools for larger ones. No one-time human approval tokens or image/card confirmation buttons remain. Server-side authentication, byte integrity and card-specific source/pixel checks stay mandatory.

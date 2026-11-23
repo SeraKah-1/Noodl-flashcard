@@ -1,4 +1,5 @@
 import {CardClock,dueClues,dragRating,replayReviews,isProcedureDeck,orderedProcedureCards,backPagesFor,nextBackPage} from '/shared/logic.js';
+import {mediaRequirementOf,frontImageIds,knownFrontMediaReady} from '/shared/mediaPolicy.js';
 // For static hosting, shared logic is copied at /shared/logic.js by build/deployment.
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const main=$('#main'),modalRoot=$('#modalRoot');
@@ -130,19 +131,49 @@ async function ensureMediaViaMcp(id){
  mediaFallbackPending.set(id,task);
  try{return await task;}catch(e){mediaFallbackFailed.add(id);throw e;}finally{mediaFallbackPending.delete(id);}
 }
+/** Only explicit visual-identification questions depend on front image availability.
+ * Text-only, legacy, OSCE and optional-image cards never enter this gate.
+ */
+function questionVisualStatus(card=playerCard()){
+ if(mediaRequirementOf(card)!=='required_for_question')return {ready:true,reason:''};
+ const ids=frontImageIds(card);
+ if(!ids.length)return {ready:false,reason:'Gambar inti belum ditempel di sisi pertanyaan.'};
+ for(const id of ids){
+  const media=state.media.find(m=>m.id===id);
+  if(!media||media.status!=='approved')return {ready:false,reason:'Gambar pertanyaan belum tersedia atau belum lolos pemeriksaan file.'};
+  if(mediaFallbackFailed.has(id))return {ready:false,reason:'Gambar tidak dapat dibaca dari penyimpanan. Sinkronkan atau unggah ulang.'};
+  const img=[...document.querySelectorAll('.flash-face.front img[data-required-question-image]')].find(el=>el.dataset.mediaId===id);
+  if(!img||!img.complete)return {ready:false,reason:'Menunggu gambar pertanyaan selesai dimuat. Jika gagal, lewati kartu ini.'};
+  if(!img.naturalWidth)return {ready:false,reason:'Gambar pertanyaan gagal dimuat; kartu ini tidak boleh dinilai.'};
+ }
+ return {ready:true,reason:'Gambar pertanyaan sudah dimuat. Kamu bisa menjawab dan memberi rating.'};
+}
+function updateQuestionVisualGate(){
+ if(state.route!=='player'||!state.session)return;
+ const card=playerCard(),el=document.querySelector('#questionVisualGate');
+ if(mediaRequirementOf(card)!=='required_for_question')return;
+ const status=questionVisualStatus(card);
+ if(el){el.textContent=(status.ready?'✓ ':'⚠ ')+status.reason;el.classList.toggle('blocked',!status.ready);el.setAttribute('aria-live','polite');}
+ if(!state.session.flipped&&playerTimerEnabled(state.session)){if(status.ready&&document.visibilityState==='visible'&&!state.modal)state.session.clock.resume(clockMs());else state.session.clock.pause(clockMs());}
+ document.querySelectorAll('#ratingControls [data-rating]').forEach(button=>{button.disabled=!status.ready;button.setAttribute('aria-disabled',String(!status.ready));});
+}
+document.addEventListener('load',event=>{
+ if(event.target instanceof HTMLImageElement && event.target.matches('[data-required-question-image]'))updateQuestionVisualGate();
+},true);
 document.addEventListener('error',event=>{
  const img=event.target;
+ if(img instanceof HTMLImageElement && img.matches('[data-required-question-image]'))queueMicrotask(updateQuestionVisualGate);
  if(!(img instanceof HTMLImageElement)||!img.dataset.mediaId||state.backend!=='embedded')return;
  const id=img.dataset.mediaId;if(mediaFallbackFailed.has(id))return;
  void ensureMediaViaMcp(id).catch(e=>{console.warn('Image could not be read from private MCP storage',e.message)});
 },true);
-function blocksHtml(blocks){return (blocks||[]).map(b=>{
+function blocksHtml(blocks,side='back'){return (blocks||[]).map(b=>{
  if(b.type==='text')return `<div class="block-text">${safe(b.text)}</div>`;
  if(b.type==='math')return `<div class="math" role="math" aria-label="${safe(b.latex)}">${safe(b.latex)}</div>`;
  if(b.type==='image'){
   const img=mediaSrc(b.assetId),m=state.media.find(x=>x.id===b.assetId),label=m?.provenance?.origin;
   if(!img||m?.status!=='approved')return `<p class="note">Gambar tidak tersedia atau file gagal diverifikasi.</p>`;
-  return `<figure><img src="${safe(img)}" alt="${safe(b.alt)}" data-media-id="${safe(b.assetId)}" data-zoom="${safe(b.assetId)}" loading="eager"/><figcaption>${safe(b.alt)}${state.settings.showSource&&label?` · ${safe(label)}`:''}</figcaption></figure>`;
+  return `<figure><img src="${safe(img)}" alt="${safe(b.alt)}" data-media-id="${safe(b.assetId)}" data-zoom="${safe(b.assetId)}" ${side==='front'&&mediaRequirementOf(playerCard())==='required_for_question'?'data-required-question-image="1"':''} loading="eager"/><figcaption>${safe(b.alt)}${state.settings.showSource&&label?` · ${safe(label)}`:''}</figcaption></figure>`;
  }
  if(b.type==='embed'){
   try{const url=new URL(b.url);if(url.protocol!=='https:'||!['www.youtube-nocookie.com','www.youtube.com','youtu.be','player.vimeo.com','vimeo.com'].includes(url.hostname))return '<p>Embed tidak didukung.</p>';
@@ -209,7 +240,7 @@ function openCardReader(side='back'){
  const heading=side==='front'?'Pertanyaan lengkap':(hasDeepPages(card)?selectedPage.title:'Jawaban & pembahasan');
  const step=card.procedureStep;
  const source=side==='back'&&step&&s.backPageIndex===0?`<div class="reader-source"><strong>Butir tilik ${step.order}:</strong> ${safe(step.checklistItem)}${step.critical?' · Langkah kritis':''}<br>Sumber: ${safe(step.sourceDocument)}${step.sourcePage?' · halaman '+step.sourcePage:''}</div>`:'';
- const surface=()=>`<div class="reader-content" id="readerContent" tabindex="0" role="region" aria-label="Teks lengkap, dapat digulir"><div class="reader-text">${source}${side==='front'?blocksHtml(card.front):blocksHtml(selectedPage.blocks)}${side==='back'&&s.backPageIndex===0?explanationHtml(card):''}${side==='back'&&s.backPageIndex>0?deepPageSource(selectedPage):''}</div><div class="reader-end">Akhir ${side==='back'?'jawaban':'pertanyaan'} · semua materi di atas dapat digulir</div></div>`;
+ const surface=()=>`<div class="reader-content" id="readerContent" tabindex="0" role="region" aria-label="Teks lengkap, dapat digulir"><div class="reader-text">${source}${side==='front'?blocksHtml(card.front,'front'):blocksHtml(selectedPage.blocks)}${side==='back'&&s.backPageIndex===0?explanationHtml(card):''}${side==='back'&&s.backPageIndex>0?deepPageSource(selectedPage):''}</div><div class="reader-end">Akhir ${side==='back'?'jawaban':'pertanyaan'} · semua materi di atas dapat digulir</div></div>`;
  modalRoot.innerHTML=`<div class="reader-overlay" id="readerOverlay"><div class="reader-backdrop" data-close-reader></div><section class="reader-panel" role="dialog" aria-modal="true" aria-labelledby="readerTitle"><div class="reader-top"><div><div class="kicker">LAYERED FLASHCARD</div><h2 id="readerTitle">${heading}</h2><p> ${safe(s.deck.title)} · kartu ${s.index+1}/${s.cards.length}</p></div><button type="button" class="button secondary" id="readerClose" aria-label="Tutup pembahasan">✕ Tutup</button></div><div class="reader-tabs" role="group" aria-label="Bagian kartu"><button class="reader-tab ${side==='front'?'selected':''}" data-reader-side="front" aria-pressed="${side==='front'}">Pertanyaan</button><button class="reader-tab ${side==='back'?'selected':''}" data-reader-side="back" aria-pressed="${side==='back'}" ${!s.flipped?'disabled title="Balik kartu dahulu untuk membuka jawaban"':''}>Jawaban${hasExplanation(card)?' + Detail':''}</button></div>${surface()}<div class="reader-bottom"><span>Scroll untuk membaca · swipe kartu dijeda</span>${side==='back'&&hasDeepPages(card)?`<button type="button" class="button secondary" id="readerPrev" ${s.backPageIndex<=0?'disabled':''}>‹</button><button type="button" class="button secondary" id="readerNext" ${s.backPageIndex>=backPagesFor(card).length-1?'disabled':''}>›</button>`:''}<button type="button" class="button primary" id="readerDone">Kembali ke kartu</button></div></section></div>`;
  const content=$('#readerContent');if(content)content.scrollTop=0;
  $('#readerClose')?.addEventListener('click',closeModal);
@@ -223,7 +254,10 @@ function openCardReader(side='back'){
 function startDeck(id,onlyDue=false){const deck=state.decks.find(x=>x.id===id);if(!deck||!deck.cards?.length){toast('Deck tidak memiliki kartu.');return;}
  const procedure=isProcedureDeck(deck.cards);
  // A due-only subset breaks the checklist order; procedural decks ALWAYS replay the full station.
- const cards=procedure?orderedProcedureCards(deck.cards):(onlyDue?deck.cards.filter(c=>replayReviews(state.reviews,c.id).due):deck.cards);
+ const candidates=onlyDue?deck.cards.filter(c=>replayReviews(state.reviews,c.id).due):deck.cards;
+ const cards=procedure?orderedProcedureCards(deck.cards):candidates.filter(c=>knownFrontMediaReady(c,state.media));
+ const skipped=procedure?0:candidates.length-cards.length;
+ if(skipped)toast(`${skipped} kartu visual belum punya gambar inti, dilewati tanpa mengubah riwayat review.`);
  if(!cards.length){toast('Belum ada kartu yang jatuh tempo.');return;}
  const session={deck,cards,procedure,procedureView:'technique',index:0,flipped:false,backPageIndex:0,clock:null,cluesSeen:[],lastClue:0,processing:false,started:false};state.session=session;state.prevReview=null;state.route='player';document.body.classList.add('in-player');history.replaceState(null,'','#review');initCard();render();}
 function playerTimerEnabled(s=state.session){return !!s&&!s.procedure&&state.settings.timer;}
@@ -233,8 +267,8 @@ function playerCard(){const s=state.session;return s?.cards[s.index]}
 function renderPlayer(){const s=state.session;if(!s)return navigate('review');const card=playerCard();
  if(!card){main.innerHTML=`<div class="screen narrow" style="text-align:center;padding-top:80px"><div class="hero-mascot">(≧▽≦)</div><h1 class="page-title">Sesi selesai!</h1><p class="page-intro">${s.cards.length} kartu sudah kamu lewati. Rating tersimpan tanpa mengarang skor benar/salah.</p><div class="hero-actions" style="justify-content:center"><button class="button primary" data-nav="review">Ke Review</button><button class="button secondary" data-nav="library">My decks</button></div></div>`;return;}
  const n=s.index+1,len=s.cards.length,revealed=s.flipped,procedure=!!s.procedure,sequence=procedure&&s.procedureView==='sequence',timerOn=playerTimerEnabled(s),step=card.procedureStep,enterClass=s.enterDirection>0?'enter-from-left':s.enterDirection<0?'enter-from-right':'',clues=s.cluesSeen.map(t=>card.clues?.find(c=>c.atSecond===t)).filter(Boolean),deep=hasDeepPages(card);
- main.innerHTML=`<div class="screen narrow"><div class="session-head"><div><button class="button ghost" data-nav="review">← Kembali</button></div><div style="text-align:center"><h2 class="session-title">${safe(s.deck.title)}</h2><p class="session-sub">${procedure?'TILIK OSCE · URUT':'FLASHCARDS'} · ${n} / ${len}</p></div><div><button class="button ghost" id="playerUndo" ${state.prevReview?'':'disabled'}>↶ Undo</button></div></div>${procedure?`<div class="procedure-modes" aria-label="Cara latihan tilik"><button class="button ${s.procedureView==='technique'?'primary':'secondary'}" data-procedure-view="technique" aria-pressed="${s.procedureView==='technique'}">Pelajari teknik</button><button class="button ${s.procedureView==='sequence'?'primary':'secondary'}" data-procedure-view="sequence" aria-pressed="${s.procedureView==='sequence'}">Ingat urutan</button></div>`:''}<div class="progress-rail"><div class="progress-bar" style="width:${(s.index/len)*100}%"></div></div><div class="timer-line"><span>✦ ${revealed?'Jawaban terbuka':procedure?'Peragakan dahulu, baru balik':'Ingat dulu, baru balik'}</span><span id="timerPill" class="timer-pill">${timerOn?'20s':procedure?'Tanpa timer':'Santai'}</span></div><div class="flash-stage" id="flashStage" aria-label="Kartu flashcard; geser kiri atau kanan dari area mana saja"><div class="flash-behind"></div><div class="swipe-sticker left" id="stickerLeft">BELUM TAHU</div><div class="swipe-sticker right" id="stickerRight">TAHU</div><div class="flash-motion ${enterClass}" id="flashMotion"><div class="flash-scene ${revealed?'flipped':''}" id="flashScene"><div class="flash-face front" aria-hidden="${revealed}"><div class="face-top"><span>${procedure?'LANGKAH '+n:'PERTANYAAN'}</span><span>NOODL ◈</span></div><div class="face-content" tabindex="${revealed?-1:0}" role="region" aria-label="Pertanyaan kartu, gulir untuk membaca seluruh teks">${sequence?'<div class="sequence-recall">Apa tindakan selanjutnya?<small>Ucapkan dan peragakan tanpa melihat daftar tilik</small></div>':blocksHtml(card.front)}</div><div class="face-footer">${(card.front||[]).filter(b=>b.type==='text').reduce((n,b)=>n+b.text.length,0)>350?'↕ Gulir pertanyaan · ☷ Baca lengkap':procedure?'Peragakan tindakan · geser dari area mana saja':'Ketuk untuk balik · geser dari area mana saja'}</div></div><div class="flash-face back" aria-hidden="${!revealed}"><div class="face-top"><span>${procedure?'TINDAKAN '+n:'JAWABAN'}</span><span>FLASHCARD ✦</span></div><div class="face-content answer" tabindex="${revealed?0:-1}" role="region" aria-label="Jawaban kartu, gulir untuk membaca seluruh teks"><div class="deep-page-body" id="deepPageBody">${deepBackHtml(card,s.backPageIndex)}</div></div><div class="face-footer">${(card.back||[]).filter(b=>b.type==='text').reduce((n,b)=>n+b.text.length,0)>350?'↕ Gulir jawaban · ☷ Baca lengkap':procedure?'Rating hanya penilaian diri, bukan bukti kompetensi klinis':'Nilai sesuai ingatanmu, bukan tebakanmu'}</div></div></div></div></div>${deepNavHtml(card,s.backPageIndex,revealed)}${!procedure?`<div class="clue-card" id="clueBox"><span class="info-icon">✦</span><div id="clueText">${revealed?'Jawaban dibuka. Timer dijeda.':'Clue pertama muncul pada detik ke-5.'}</div><button class="reveal-clues" id="showClues" ${clues.length?'':'disabled'}>Clue (${clues.length})</button></div>`:''}<div id="ratingControls">${revealed?renderRatings():renderSwipeGuide()}</div><div class="player-controls"><button class="button secondary" id="playerFlip">${revealed?'↶ Lihat depan':'↻ Balik kartu'}</button><button class="button secondary" id="playerRead" title="Buka seluruh teks tanpa risiko terpotong">☷ Baca lengkap${hasExplanation(card)?" + pembahasan":""}</button>${state.backend!=='local'?'<button class="button secondary" id="playerRefresh" title="Baca perubahan isi terbaru dari ChatGPT MCP">↻ Perbarui isi</button>':''}<button class="button ghost" id="playerSkip">Lewati →</button></div><p class="session-meta">${procedure?'Urutan tindakan mengikuti sumber · tanpa timer dan clue · rating bukan sertifikasi teknik. ':''}${deep?'Depan: swipe untuk rating · Belakang: swipe untuk halaman · Rating via tombol.':'Swipe kiri / kanan termasuk di tengah kartu'} · Space: balik · 1–4: rating setelah flip · Z: undo. ${state.backend==='local'?'Data tersimpan di browser.':'Penyimpanan lokal dahulu, sinkronisasi kemudian.'}</p></div>`;
- s.enterDirection=0;bindGestures();bindPlayerButtons();tick();
+ main.innerHTML=`<div class="screen narrow"><div class="session-head"><div><button class="button ghost" data-nav="review">← Kembali</button></div><div style="text-align:center"><h2 class="session-title">${safe(s.deck.title)}</h2><p class="session-sub">${procedure?'TILIK OSCE · URUT':'FLASHCARDS'} · ${n} / ${len}</p></div><div><button class="button ghost" id="playerUndo" ${state.prevReview?'':'disabled'}>↶ Undo</button></div></div>${procedure?`<div class="procedure-modes" aria-label="Cara latihan tilik"><button class="button ${s.procedureView==='technique'?'primary':'secondary'}" data-procedure-view="technique" aria-pressed="${s.procedureView==='technique'}">Pelajari teknik</button><button class="button ${s.procedureView==='sequence'?'primary':'secondary'}" data-procedure-view="sequence" aria-pressed="${s.procedureView==='sequence'}">Ingat urutan</button></div>`:''}<div class="progress-rail"><div class="progress-bar" style="width:${(s.index/len)*100}%"></div></div><div class="timer-line"><span>✦ ${revealed?'Jawaban terbuka':procedure?'Peragakan dahulu, baru balik':'Ingat dulu, baru balik'}</span><span id="timerPill" class="timer-pill">${timerOn?'20s':procedure?'Tanpa timer':'Santai'}</span></div><div class="flash-stage" id="flashStage" aria-label="Kartu flashcard; geser kiri atau kanan dari area mana saja"><div class="flash-behind"></div><div class="swipe-sticker left" id="stickerLeft">BELUM TAHU</div><div class="swipe-sticker right" id="stickerRight">TAHU</div><div class="flash-motion ${enterClass}" id="flashMotion"><div class="flash-scene ${revealed?'flipped':''}" id="flashScene"><div class="flash-face front" aria-hidden="${revealed}"><div class="face-top"><span>${procedure?'LANGKAH '+n:'PERTANYAAN'}</span><span>NOODL ◈</span></div><div class="face-content" tabindex="${revealed?-1:0}" role="region" aria-label="Pertanyaan kartu, gulir untuk membaca seluruh teks">${sequence?'<div class="sequence-recall">Apa tindakan selanjutnya?<small>Ucapkan dan peragakan tanpa melihat daftar tilik</small></div>':blocksHtml(card.front,'front')}</div><div class="face-footer">${(card.front||[]).filter(b=>b.type==='text').reduce((n,b)=>n+b.text.length,0)>350?'↕ Gulir pertanyaan · ☷ Baca lengkap':procedure?'Peragakan tindakan · geser dari area mana saja':'Ketuk untuk balik · geser dari area mana saja'}</div></div><div class="flash-face back" aria-hidden="${!revealed}"><div class="face-top"><span>${procedure?'TINDAKAN '+n:'JAWABAN'}</span><span>FLASHCARD ✦</span></div><div class="face-content answer" tabindex="${revealed?0:-1}" role="region" aria-label="Jawaban kartu, gulir untuk membaca seluruh teks"><div class="deep-page-body" id="deepPageBody">${deepBackHtml(card,s.backPageIndex)}</div></div><div class="face-footer">${(card.back||[]).filter(b=>b.type==='text').reduce((n,b)=>n+b.text.length,0)>350?'↕ Gulir jawaban · ☷ Baca lengkap':procedure?'Rating hanya penilaian diri, bukan bukti kompetensi klinis':'Nilai sesuai ingatanmu, bukan tebakanmu'}</div></div></div></div></div>${deepNavHtml(card,s.backPageIndex,revealed)}${mediaRequirementOf(card)==='required_for_question'?`<div id="questionVisualGate" class="question-visual-gate" role="status" aria-live="polite">Memeriksa gambar inti pertanyaan…</div>`:''}${!procedure?`<div class="clue-card" id="clueBox"><span class="info-icon">✦</span><div id="clueText">${revealed?'Jawaban dibuka. Timer dijeda.':'Clue pertama muncul pada detik ke-5.'}</div><button class="reveal-clues" id="showClues" ${clues.length?'':'disabled'}>Clue (${clues.length})</button></div>`:''}<div id="ratingControls">${revealed?renderRatings():renderSwipeGuide()}</div><div class="player-controls"><button class="button secondary" id="playerFlip">${revealed?'↶ Lihat depan':'↻ Balik kartu'}</button><button class="button secondary" id="playerRead" title="Buka seluruh teks tanpa risiko terpotong">☷ Baca lengkap${hasExplanation(card)?" + pembahasan":""}</button>${state.backend!=='local'?'<button class="button secondary" id="playerRefresh" title="Baca perubahan isi terbaru dari ChatGPT MCP">↻ Perbarui isi</button>':''}<button class="button ghost" id="playerSkip">Lewati →</button></div><p class="session-meta">${procedure?'Urutan tindakan mengikuti sumber · tanpa timer dan clue · rating bukan sertifikasi teknik. ':''}${deep?'Depan: swipe untuk rating · Belakang: swipe untuk halaman · Rating via tombol.':'Swipe kiri / kanan termasuk di tengah kartu'} · Space: balik · 1–4: rating setelah flip · Z: undo. ${state.backend==='local'?'Data tersimpan di browser.':'Penyimpanan lokal dahulu, sinkronisasi kemudian.'}</p></div>`;
+ s.enterDirection=0;bindGestures();bindPlayerButtons();updateQuestionVisualGate();tick();
 }
 function renderRatings(){return `<div class="rating-grid">${[['Lupa','0','forget','↶'],['Sulit','1','','◌'],['Bagus','2','','✓'],['Mudah','3','easy','✦']].map(([text,rating,cls,icon])=>`<button class="rating ${cls}" data-rating="${rating}"><span>${icon}</span>${text}<small>${Number(rating)+1} / ${rating==='0'?'←':rating==='3'?'→':'tap'}</small></button>`).join('')}</div>`}
 function renderSwipeGuide(){return `<div class="swipe-guide"><span class="left">← Belum tahu</span><span>Swipe tanpa harus membalik</span><span class="right">Sudah tahu →</span></div>`}
@@ -251,7 +285,7 @@ function tick(){cancelAnimationFrame(rafId);const s=state.session;if(!s||state.r
 function flip(){const s=state.session;if(!s||s.processing||state.modal)return;s.flipped=!s.flipped;s.backPageIndex=0;
  if(s.flipped){s.clock.pause(clockMs());}else if(playerTimerEnabled(s)&&document.visibilityState==='visible'){s.clock.resume(clockMs());}
  $$('.face-content').forEach(el=>{el.scrollTop=0;el.tabIndex=el.closest('.flash-face.back')?(s.flipped?0:-1):(s.flipped?-1:0);});
- $('#flashScene')?.classList.toggle('flipped',s.flipped);$('.flash-face.front')?.setAttribute('aria-hidden',String(s.flipped));$('.flash-face.back')?.setAttribute('aria-hidden',String(!s.flipped));$('#ratingControls').innerHTML=s.flipped?renderRatings():renderSwipeGuide();$('#playerFlip').textContent=s.flipped?'↶ Lihat depan':'↻ Balik kartu';$('.timer-line span:first-child').textContent=s.flipped?'✦ Jawaban terbuka':s.procedure?'✦ Peragakan dahulu, baru balik':'✦ Ingat dulu, baru balik';if(s.flipped){if($('#clueText'))$('#clueText').textContent='Jawaban dibuka. Timer dijeda.';}else updateClueDisplay();updateDeepPageUI();}
+ $('#flashScene')?.classList.toggle('flipped',s.flipped);$('.flash-face.front')?.setAttribute('aria-hidden',String(s.flipped));$('.flash-face.back')?.setAttribute('aria-hidden',String(!s.flipped));$('#ratingControls').innerHTML=s.flipped?renderRatings():renderSwipeGuide();updateQuestionVisualGate();$('#playerFlip').textContent=s.flipped?'↶ Lihat depan':'↻ Balik kartu';$('.timer-line span:first-child').textContent=s.flipped?'✦ Jawaban terbuka':s.procedure?'✦ Peragakan dahulu, baru balik':'✦ Ingat dulu, baru balik';if(s.flipped){if($('#clueText'))$('#clueText').textContent='Jawaban dibuka. Timer dijeda.';}else updateClueDisplay();updateDeepPageUI();}
 function bindPlayerButtons(){
  $('#playerFlip')?.addEventListener('click',flip);
  $('#playerRead')?.addEventListener('click',()=>openCardReader(state.session?.flipped?'back':'front'));
@@ -378,6 +412,7 @@ function animateSwipeExit(direction){
 }
 function advanceNoRating(){const s=state.session;if(!s||s.processing)return;s.index++;initCard();renderPlayer();}
 async function rate(rating,options={}){const s=state.session;if(!s||s.processing||!playerCard())return;
+ if(!questionVisualStatus(playerCard()).ready){toast('Pertanyaan visual belum siap: gambar inti harus tampil sebelum review. Gunakan Lewati.');updateQuestionVisualGate();return;}
  if(!s.flipped&&!([0,3].includes(rating)))return;
  s.processing=true;s.clock.pause(clockMs());const c=playerCard(),elapsedMs=Math.floor(s.clock.elapsed(clockMs()));
  const event={id:uuid(),operationId:null,deckId:s.deck.id,cardId:c.id,rating,answerRevealed:s.flipped,cluesSeen:[...s.cluesSeen],elapsedMs:playerTimerEnabled(s)?elapsedMs:0,timedOut:playerTimerEnabled(s)&&s.clock.expired(clockMs()),reviewedAt:new Date().toISOString(),undoneAt:null};event.operationId=event.id;
@@ -403,7 +438,7 @@ async function flushQueue(){if(flushing||state.backend==='local'||!navigator.onL
  finally{flushing=false;}
 }
 async function refresh(){if(state.backend==='local'){toast('Mode lokal: tidak ada koneksi MCP.');return;}
- try{await flushQueue();const cloud=await fetchCloud();state.decks=cloud.data.decks||[];state.folders=cloud.data.folders||[];state.media=cloud.data.media||[];state.visualBindings=cloud.data.visualBindings||[];
+ try{await flushQueue();const cloud=await fetchCloud();mediaFallbackFailed.clear();state.decks=cloud.data.decks||[];state.folders=cloud.data.folders||[];state.media=cloud.data.media||[];state.visualBindings=cloud.data.visualBindings||[];
  const pending=state.queue.filter(q=>q.kind==='review').map(q=>q.payload);
  state.reviews=[...(cloud.data.reviews||[]),...pending];
  if(state.session){
@@ -421,7 +456,7 @@ async function refresh(){if(state.backend==='local'){toast('Mode lokal: tidak ad
  await persist();render();toast('Isi terbaru dari MCP sudah dimuat.');}
  catch(e){toast('Tidak bisa mengambil data cloud: '+e.message);}
 }
-async function createWithChatGPT(){const folder=state.folders.find(f=>f.id===state.activeFolderId);const destination=folder&&state.backend!=='local'?` Simpan langsung ke folder ${folder.name} menggunakan folderId=${folder.id} pada tool create_deck.`:'';const message='Buatkan satu deck flashcard Noodl. Tanyakan dulu topik dan sumber yang ingin kupakai. Untuk teori buat front, back singkat, dan tepat tiga clue pada 5/10/15 detik. Jika materi kompleks, pakai backPages[] (id unik, kind, title, blocks, sourceRefs) berisi teknik, temuan normal, abnormal, diagnosis banding, dan visual hanya jika relevan. MCP bisa membaca isi dengan get_card_content/list_card_contents/search_card_contents dan mengedit bagian terpilih dengan patch_card_content memakai expectedRevision; jangan tulis ulang deck bila hanya satu halaman berubah. Kalau sumbernya daftar tilik OSCE, jangan acak langkah: buat procedureStep berurutan 1..N dari butir tilik asli dengan checklistItem, phase, critical, sourceDocument, sourcePage. Tidak perlu clue untuk tilik; mode urutan otomatis tanpa timer. Jangan mengarang butir atau menilai kompetensi hanya dari swipe. Simpan lewat MCP create_deck. Jika ada gambar dari dokumen atau internet, benar-benar buka gambar FINAL lewat inspect_media_image, catat sumber dan lisensi, lalu gunakan attach_verified_visuals_batch dengan dua laporan pemeriksaan per gambar. Jangan minta konfirmasi manual atau mengklaim gambar sudah terpasang sebelum get_deck dan list_media menunjukkan hasilnya.'+destination;
+async function createWithChatGPT(){const folder=state.folders.find(f=>f.id===state.activeFolderId);const destination=folder&&state.backend!=='local'?` Simpan langsung ke folder ${folder.name} menggunakan folderId=${folder.id} pada tool create_deck.`:'';const message='Buatkan satu deck flashcard Noodl. Tanyakan dulu topik dan sumber yang ingin kupakai. Untuk teori buat front, back singkat, dan tepat tiga clue pada 5/10/15 detik. Jika materi kompleks, pakai backPages[] (id unik, kind, title, blocks, sourceRefs) berisi teknik, temuan normal, abnormal, diagnosis banding, dan visual hanya jika relevan. MCP bisa membaca isi dengan get_card_content/list_card_contents/search_card_contents dan mengedit bagian terpilih dengan patch_card_content memakai expectedRevision; jangan tulis ulang deck bila hanya satu halaman berubah. Kalau sumbernya daftar tilik OSCE, jangan acak langkah: buat procedureStep berurutan 1..N dari butir tilik asli dengan checklistItem, phase, critical, sourceDocument, sourcePage. Tidak perlu clue untuk tilik; mode urutan otomatis tanpa timer. Jangan mengarang butir atau menilai kompetensi hanya dari swipe. Simpan lewat MCP create_deck. Jangan wajibkan gambar untuk kartu teks. Jika gambar hanya pelengkap, mediaRequirement=optional atau biarkan kosong; hanya pertanyaan yang tidak mungkin dijawab tanpa gambar menggunakan mediaRequirement=required_for_question. Gambar boleh pada front atau back, tetapi harus diimpor dan dicek lewat MCP sebelum dipasang. Jika ada gambar dari dokumen atau internet, benar-benar buka gambar FINAL lewat inspect_media_image, catat sumber dan lisensi, lalu gunakan attach_verified_visuals_batch dengan dua laporan pemeriksaan per gambar. Jangan minta konfirmasi manual atau mengklaim gambar sudah terpasang sebelum get_deck dan list_media menunjukkan hasilnya.'+destination;
  if(looksEmbedded()&&window.openai?.sendFollowUpMessage){try{await window.openai.sendFollowUpMessage({prompt:message});return;}catch(e){toast('Permintaan ke ChatGPT gagal.');return;}}
  const win=window.open('https://chatgpt.com/','_blank','noopener,noreferrer');try{await navigator.clipboard.writeText(message);toast('Instruksi disalin. Tempel di ChatGPT yang terhubung ke Noodl.');}catch{if(win)win.close();toast('Izinkan clipboard atau buka ChatGPT secara manual.');}
 }
@@ -475,15 +510,50 @@ async function uploadMedia(){
  else toast(`${success} gambar berhasil disimpan. ChatGPT dapat memeriksa dan memasangkannya ke kartu lewat MCP.`);
 }
 
-async function previewMedia(id){
+async function previewMedia(id,label='Gambar materi'){
  const media=state.media.find(m=>m.id===id);if(!media)return;
  if(state.session?.clock)state.session.clock.pause(clockMs());
  let src=mediaSrc(id);if(!src)return toast('Gambar tidak tersedia');
  const image=new Image();image.src=src;
  try{await image.decode();}catch{try{src=await ensureMediaViaMcp(id);image.src=src;await image.decode();}catch(e){return toast('Gambar gagal dibuka: '+e.message);}}
  state.modal={id,type:'media-preview',rendered:true};
- modalRoot.innerHTML=`<div class="preview-modal" role="dialog" aria-modal="true" aria-labelledby="mediaTitle"><div class="modal-panel"><div class="session-head"><div><span class="kicker">MEDIA PREVIEW · NO APPROVAL STEP</span><h2 id="mediaTitle">Gambar tersimpan</h2></div><button class="button ghost" id="closePreview">Tutup ✕</button></div><p>Pratinjau hanya untuk melihat gambar. Kecocokan dengan jawaban kartu diperiksa lewat dua tahap MCP oleh ChatGPT.</p><img id="fullPreview" class="modal-image" src="${safe(src)}" alt="Gambar tersimpan"/><div class="notice"><strong>Sumber:</strong> ${safe(media.provenance?.origin||'Tidak diketahui')} · ${media.width}×${media.height} · ${safe(media.mime)}<br><strong>Integritas:</strong> ${safe(media.sha256||'belum tercatat')}<br><strong>Lisensi:</strong> ${safe(media.provenance?.license||'sumber pribadi / belum dicatat')}</div></div></div>`;
+ modalRoot.innerHTML=`<div class="preview-modal zoom-modal" id="visualViewer" role="dialog" aria-modal="true" aria-labelledby="mediaTitle"><div class="modal-panel zoom-modal-panel"><div class="session-head"><div><span class="kicker">ZOOM & PAN · GAMBAR SUMBER</span><h2 id="mediaTitle">${safe(label)}</h2></div><button class="button ghost" id="closePreview" aria-label="Tutup gambar">Tutup ✕</button></div><div class="image-zoom-viewport" id="imageZoomViewport" role="region" aria-label="Gambar dapat diperbesar dan digeser dengan sentuhan atau mouse"><img id="fullPreview" class="zoomable-image" src="${safe(src)}" alt="${safe(label)}" draggable="false"/></div><div class="image-zoom-toolbar" role="group" aria-label="Kontrol pembesaran gambar"><button type="button" class="button secondary" id="zoomOut" aria-label="Perkecil gambar">−</button><strong id="zoomLevel" aria-live="polite">100%</strong><button type="button" class="button secondary" id="zoomIn" aria-label="Perbesar gambar">＋</button><button type="button" class="button ghost" id="zoomReset">Atur ulang</button></div><p class="zoom-instructions">Zoom dengan dua jari atau roda mouse; geser gambar untuk melihat detail. Gestur kartu dinonaktifkan selama jendela ini terbuka.</p><div class="notice"><strong>Sumber:</strong> ${safe(media.provenance?.origin||'Tidak diketahui')} · ${media.width}×${media.height} · ${safe(media.mime)}<br><strong>Integritas:</strong> ${safe(media.sha256||'belum tercatat')}<br><strong>Lisensi:</strong> ${safe(media.provenance?.license||'sumber pribadi / belum dicatat')}</div></div></div>`;
  $('#closePreview')?.addEventListener('click',closeModal);
+ installImageZoom();
+}
+function installImageZoom(){
+ const view=$('#imageZoomViewport'),img=$('#fullPreview'),label=$('#zoomLevel');if(!view||!img)return;
+ const points=new Map();let scale=1,dx=0,dy=0,pinch=null,last=null;
+ const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+ const update=()=>{
+  const width=img.offsetWidth||view.clientWidth,height=img.offsetHeight||view.clientHeight;
+  dx=clamp(dx,-Math.max(0,(width*scale-view.clientWidth)/2),Math.max(0,(width*scale-view.clientWidth)/2));
+  dy=clamp(dy,-Math.max(0,(height*scale-view.clientHeight)/2),Math.max(0,(height*scale-view.clientHeight)/2));
+  img.style.transform=`translate3d(${dx}px,${dy}px,0) scale(${scale})`;
+  if(label)label.textContent=Math.round(scale*100)+'%';
+  view.classList.toggle('is-zoomed',scale>1.01);
+ };
+ const setScale=(value)=>{scale=clamp(value,1,5);if(scale===1){dx=0;dy=0;}update();};
+ const distance=arr=>Math.hypot(arr[0].x-arr[1].x,arr[0].y-arr[1].y);
+ view.addEventListener('pointerdown',e=>{
+  points.set(e.pointerId,{x:e.clientX,y:e.clientY});view.setPointerCapture(e.pointerId);
+  if(points.size===1){last={x:e.clientX,y:e.clientY};pinch=null;}
+  else if(points.size===2){pinch={distance:distance([...points.values()]),scale};last=null;}
+ });
+ view.addEventListener('pointermove',e=>{
+  if(!points.has(e.pointerId))return;
+  const old=points.get(e.pointerId);points.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(points.size===2&&pinch){const now=distance([...points.values()]);setScale(pinch.scale*(now/Math.max(1,pinch.distance)));}
+  else if(points.size===1&&scale>1){dx+=e.clientX-old.x;dy+=e.clientY-old.y;update();}
+ });
+ const end=e=>{points.delete(e.pointerId);if(points.size===1){last=[...points.values()][0];pinch=null;}else if(!points.size){pinch=null;last=null;}};
+ view.addEventListener('pointerup',end);view.addEventListener('pointercancel',end);
+ view.addEventListener('wheel',e=>{e.preventDefault();setScale(scale*(e.deltaY<0?1.18:1/1.18));},{passive:false});
+ view.addEventListener('dblclick',()=>setScale(scale<2?2:1));
+ $('#zoomIn')?.addEventListener('click',()=>setScale(scale*1.3));
+ $('#zoomOut')?.addEventListener('click',()=>setScale(scale/1.3));
+ $('#zoomReset')?.addEventListener('click',()=>{scale=1;dx=0;dy=0;update();});
+ img.addEventListener('load',update);update();
 }
 function closeModal(){const wasReader=state.modal?.kind==='card-reader';state.modal=null;document.body.classList.remove('reading-open');modalRoot.innerHTML='';if(wasReader)$('#playerRead')?.focus({preventScroll:true});if(state.session&&!state.session.flipped&&document.visibilityState==='visible')state.session.clock.resume(clockMs());}
 async function rejectMedia(id){const m=state.media.find(m=>m.id===id);if(!m)return;
@@ -500,7 +570,7 @@ function pickTargetCard(assetId){
  modalRoot.innerHTML=`<div class="preview-modal" role="dialog" aria-modal="true"><div class="modal-panel" style="max-width:700px"><span class="kicker">SUMBER DAN KEC0COKAN GAMBAR</span><h2>Pilih flashcard</h2><p>Pemeriksaan aset dan pemeriksaan kecocokan kartu adalah dua hal berbeda. Setelah memilih kartu, ChatGPT wajib mengirim cek sumber dan cek gambar final.</p><img class="modal-image" style="max-height:220px" src="${safe(mediaSrc(assetId))}" alt="Gambar kandidat"/><form id="attachImageForm"><label for="targetCard">Kartu tujuan</label><select class="search" style="width:100%" id="targetCard" required>${options.map(({deck,card},i)=>`<option value="${i}">${safe(deck.title)} · ${safe(card.front?.find(b=>b.type==='text')?.text||'Kartu').slice(0,90)}</option>`).join('')}</select><label for="targetPage">Target gambar</label><select class="search" style="width:100%" id="targetPage" aria-label="Halaman tempat gambar ditempel"></select><div class="modal-footer"><button type="button" class="button ghost" id="cancelAttach">Batal</button><button type="submit" class="button primary">${state.backend==='local'?'Pasang ilustrasi lokal':'Buat kandidat pemeriksaan'}</button></div></form></div></div>`;
  const setTargetPages=()=>{
   const c=options[Number($('#targetCard').value)]?.card;
-  $('#targetPage').innerHTML=`<option value="">Jawaban inti</option>${(c?.backPages||[]).map(p=>`<option value="${safe(p.id)}">${safe(p.title)}</option>`).join('')}`;
+  $('#targetPage').innerHTML=`<option value="front">Depan — gambar pertanyaan</option><option value="back">Belakang — jawaban inti</option>${(c?.backPages||[]).map(p=>`<option value="page:${safe(p.id)}">Deep Card · ${safe(p.title)}</option>`).join('')}`;
  };
  $('#targetCard').addEventListener('change',setTargetPages);setTargetPages();
  $('#cancelAttach').addEventListener('click',closeModal);
@@ -509,7 +579,8 @@ function pickTargetCard(assetId){
    closeModal();return toast('Mode lokal belum bisa membuktikan dua pemeriksaan per kartu. Upload dan pasang melalui backend MCP terhubung.');
   }
   try{
-   const args={deckId:selected.deck.id,cardId:selected.card.id,mediaId:assetId,side:'back',...($('#targetPage').value?{pageId:$('#targetPage').value}:{})};
+   const target=$('#targetPage').value;
+   const args={deckId:selected.deck.id,cardId:selected.card.id,mediaId:assetId,side:target==='front'?'front':'back',...(target.startsWith('page:')?{pageId:target.slice(5)}:{})};
    let result;
    if(state.backend==='embedded')result=await hostCall('create_visual_candidate',args);
    else {const res=await fetch('/api/visual/candidates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args)});const data=await res.json();if(!res.ok)throw Error(data.error);result=data;}
@@ -665,7 +736,7 @@ document.addEventListener('click',e=>{
  const attach=e.target.closest('[data-attach-image]');if(attach){pickTargetCard(attach.dataset.attachImage);return;}
  const visual=e.target.closest('[data-review-binding]');if(visual){void previewCardBinding(visual.dataset.reviewBinding);return;}
  const approved=e.target.closest('[data-attach-binding]');if(approved){void attachApprovedBinding(approved.dataset.attachBinding);return;}
- const zoom=e.target.closest('[data-zoom]');if(zoom){const id=zoom.dataset.zoom;if(state.media.some(m=>m.id===id))void previewMedia(id);return;}
+ const zoom=e.target.closest('[data-zoom]');if(zoom){const id=zoom.dataset.zoom;if(state.media.some(m=>m.id===id))void previewMedia(id,zoom.getAttribute('alt')||'Gambar materi');return;}
  if(e.target.closest('#uploadMedia')){void uploadMedia();return;}
  if(e.target.closest('#refreshData')){void refresh();return;}
  if(e.target.closest('#exportLocal')){exportLocal();return;}

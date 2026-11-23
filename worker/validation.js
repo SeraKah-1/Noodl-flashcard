@@ -1,4 +1,5 @@
 import {CLUE_SECONDS, MAX_CARDS,normalizeTimer,assertProcedureSequence} from '../shared/logic.js';
+import {MEDIA_REQUIREMENTS} from '../shared/mediaPolicy.js';
 function assert(condition,message){if(!condition)throw new Error(message);}
 function txt(value,label,max=500){assert(typeof value==='string'&&value.trim().length>0&&value.length<=max,`Invalid ${label}`);return value.trim();}
 function optTxt(value,label,max=500){if(value===undefined||value===null)return '';assert(typeof value==='string'&&value.length<=max,`Invalid ${label}`);return value.trim();}
@@ -34,6 +35,8 @@ export function validateCard(input){
  assert(input&&typeof input==='object','Invalid card');
  const side=(arr,label)=>{assert(Array.isArray(arr)&&arr.length>0&&arr.length<=24,`Invalid ${label} blocks`);return arr.map(validateBlock);};
  const front=side(input.front,'front'),back=side(input.back,'back');
+ const mediaRequirement=input.mediaRequirement;
+ if(mediaRequirement!==undefined&&mediaRequirement!==null)assert(MEDIA_REQUIREMENTS.includes(mediaRequirement),'mediaRequirement must be none, optional, or required_for_question');
  const procedureStep=input.procedureStep===undefined?undefined:validateProcedureStep(input.procedureStep);
  let explanation;
  if(input.explanation!==undefined&&input.explanation!==null){
@@ -83,7 +86,7 @@ export function validateCard(input){
  const clueTexts=byTime.map((c,i)=>({atSecond:CLUE_SECONDS[i],text:txt(c.text,'clue',180)}));
  const tags=Array.isArray(input.tags)?input.tags:[];
  assert(tags.length<=10,'Too many tags');
- return {front,back,clues:clueTexts,timerSeconds:normalizeTimer(input.timerSeconds),tags:tags.map(v=>txt(v,'tag',40)),...(procedureStep?{procedureStep}:{}),...(explanation?{explanation}:{}),...(backPages?{backPages}:{})};
+ return {front,back,clues:clueTexts,timerSeconds:normalizeTimer(input.timerSeconds),tags:tags.map(v=>txt(v,'tag',40)),...(mediaRequirement!==undefined&&mediaRequirement!==null?{mediaRequirement}:{}),...(procedureStep?{procedureStep}:{}),...(explanation?{explanation}:{}),...(backPages?{backPages}:{})};
 }
 export function validateDeckInput(input){
  assert(input&&typeof input==='object','Missing deck');

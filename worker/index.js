@@ -1,6 +1,7 @@
+import {mediaRequirementOf} from '../shared/mediaPolicy.js';
 import {validateCard,validateDeckInput,validateReview,validateProvenance,validateVisualReview} from './validation.js';
 import {assertProcedureSequence} from '../shared/logic.js';
-import {storePendingImage,fetchAllowedImage,getOwnerMedia,mediaSummary,listOwnerMedia,serveOwnerMedia,readOwnerMediaChunk,rejectOwnerMedia,identifyImage,acceptPendingMediaIntegrity,readMediaForModel} from './media.js';
+import {cardVisualReadiness,storePendingImage,fetchAllowedImage,getOwnerMedia,mediaSummary,listOwnerMedia,serveOwnerMedia,readOwnerMediaChunk,rejectOwnerMedia,identifyImage,acceptPendingMediaIntegrity,readMediaForModel} from './media.js';
 import {replayReviews} from '../shared/logic.js';
 import {listFolders,requireFolder,createFolder,renameFolder,moveFolder,deleteFolder,moveDeckToFolder} from './folders.js';
 import {beginChunkedUpload,appendChunkedUpload,finishChunkedUpload,purgeExpiredUploads} from './chunkedUpload.js';
@@ -140,6 +141,7 @@ function applyCardEdits(existing,edits){
    case 'replace_explanation':if(edit.explanation===null)delete next.explanation;else next.explanation=edit.explanation;break;
    case 'replace_clues':next.clues=edit.clues;break;
    case 'replace_tags':next.tags=edit.tags;break;
+   case 'set_media_requirement':if(edit.mediaRequirement===null||edit.mediaRequirement===undefined)delete next.mediaRequirement;else next.mediaRequirement=edit.mediaRequirement;break;
    case 'replace_procedure_step':next.procedureStep=edit.procedureStep;break;
    case 'upsert_back_page':{
     const page=edit.page;const id=required(page?.id,'page.id',70);
@@ -193,7 +195,7 @@ async function patchCardContent(env,owner,args){
  if(Boolean(card.procedureStep)!==Boolean(existing.procedureStep))fail('Cannot change a procedure card into a normal card or vice versa');
  if(card.procedureStep?.order!==existing.procedureStep?.order)fail('Cannot change the order of a checklist step');
  await assertNoUnapprovedImages(env,owner,deckId,cardId,card);
- const changed=await semanticHash(existing)!==await semanticHash(card)||JSON.stringify(existing)!==JSON.stringify({...existing,...card});
+ const changed=await semanticHash(existing)!==await semanticHash(card)||(!args.edits.every(e=>e.op==='set_media_requirement')&&JSON.stringify(existing)!==JSON.stringify({...existing,...card}));
  const result={deckId,cardId,revision:deck.revision+1,requestHash,edited:true,changedFields:[...new Set(args.edits.map(e=>e.op))],backPages:(card.backPages||[]).map(p=>({id:p.id,kind:p.kind,title:p.title}))};
  const time=now();const write=await uniqueWrite(env,owner,opId,result,{condition:[`WHERE EXISTS(SELECT 1 FROM decks WHERE owner_id=? AND id=? AND revision=? AND deleted_at IS NULL)`,[owner,deckId,deck.revision]],build:r=>[
   env.DB.prepare(`UPDATE decks SET revision=revision+1,updated_at=? WHERE id=? AND owner_id=? AND revision=? AND ${nonceGuard}`).bind(time,deckId,owner,deck.revision,owner,r.id,r.nonce),
@@ -223,6 +225,11 @@ async function recordReview(env,owner,args){
  const prev=await opReceipt(env.DB,owner,opId);if(prev)return prev;
  await ownedDeck(env.DB,owner,deckId);
  const card=await env.DB.prepare('SELECT id FROM cards WHERE owner_id=? AND deck_id=? AND id=?').bind(owner,deckId,cardId).first();if(!card)fail('Card not found',404);
+ const stored=await env.DB.prepare('SELECT content_json FROM cards WHERE owner_id=? AND deck_id=? AND id=?').bind(owner,deckId,cardId).first();
+ if(mediaRequirementOf(JSON.parse(stored.content_json))==='required_for_question'){
+  const status=await cardVisualReadiness(env,owner,JSON.parse(stored.content_json));
+  if(!status.ready)fail('Required question image unavailable; review was NOT recorded',409);
+ }
  const input=validateReview(args),time=now();const result={reviewId:opId,deckId,cardId,recorded:true};
  return uniqueWrite(env,owner,opId,result,{build:r=>[
   env.DB.prepare(`INSERT INTO reviews(id,owner_id,deck_id,card_id,rating,revealed,clues_json,elapsed_ms,timed_out,reviewed_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE ${nonceGuard}`).bind(opId,owner,deckId,cardId,input.rating,Number(input.answerRevealed),JSON.stringify(input.cluesSeen),input.elapsedMs,Number(input.timedOut),time,owner,r.id,r.nonce)
@@ -238,8 +245,16 @@ async function undoReview(env,owner,args){
 async function listDue(env,owner){
  const decks=await listDecks(env.DB,owner),reviews=await reviewHistory(env.DB,owner),rows=(await env.DB.prepare('SELECT id,deck_id,content_json FROM cards WHERE owner_id=? ORDER BY deck_id,position LIMIT 5000').bind(owner).all()).results;
  const valid=new Set(decks.map(d=>d.id));
- const cards=rows.filter(r=>valid.has(r.deck_id)).map(r=>({deckId:r.deck_id,cardId:r.id,...replayReviews(reviews,r.id),front:JSON.parse(r.content_json).front}));
- return {due:cards.filter(c=>c.due),total:cards.length};
+ const cards=rows.filter(r=>valid.has(r.deck_id)).map(r=>({deckId:r.deck_id,cardId:r.id,...replayReviews(reviews,r.id),front:JSON.parse(r.content_json).front,_content:JSON.parse(r.content_json)}));
+ const due=[],blockedMedia=[];
+ for(const c of cards.filter(c=>c.due)){
+  if(mediaRequirementOf(c._content)==='required_for_question'){
+   const status=await cardVisualReadiness(env,owner,c._content);
+   if(!status.ready){blockedMedia.push({deckId:c.deckId,cardId:c.cardId,reason:status.reason,missingImageIds:status.missingImageIds});continue;}
+  }
+  const {_content,...safe}=c;due.push(safe);
+ }
+ return {due,total:cards.length,blockedMedia};
 }
 // First-class MCP image ingestion: the bytes arrive inside this call, with no host file ID,
 // download URL, transfer approval or ChatGPT-specific attachment handling.
@@ -317,17 +332,18 @@ export const TOOLS=[
  tool('move_deck_to_folder','Move an existing deck to a selected folder or root without changing cards or review history.',{...op,...deckFields,folderId:{type:['string','null']}},['operationId','deckId','expectedRevision']),
  tool('get_deck','Read full flashcard deck including all cards and source references.',{deckId:schema},['deckId'],{readOnly:true}),
  tool('list_card_contents','Read an ordered, paginated deck outline or full card contents. Safe for long Deep Cards and 1000-card decks.',{deckId:schema,offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:100},includeContent:{type:'boolean'}},['deckId'],{readOnly:true}),
- tool('get_card_content','Read exactly one card, all deep back pages, sources, content, and current deck revision.',{deckId:schema,cardId:schema},['deckId','cardId'],{readOnly:true}),
+ tool('get_card_media_status','Check whether a card can be reviewed without missing an explicitly required front image; text-only cards are always ready.',{deckId:schema,cardId:schema},['deckId','cardId'],{readOnly:true}),
+  tool('get_card_content','Read exactly one card, all deep back pages, sources, content, and current deck revision.',{deckId:schema,cardId:schema},['deckId','cardId'],{readOnly:true}),
  tool('search_card_contents','Search owned card text, front/back, deep pages, and explanation without needing card IDs.',{query:schema,deckId:schema,limit:{type:'integer',minimum:1,maximum:50}},['query'],{readOnly:true}),
- tool('patch_card_content','Modify only requested card fields or specific Deep Card pages, preserve other contents and review IDs. Read get_card_content first and pass its deckRevision as expectedRevision. Never directly insert image blocks; use two-stage visual validation.',{...op,...deckFields,cardId:schema,edits:{type:'array',minItems:1,maxItems:20,items:{type:'object',additionalProperties:true}}},['operationId','deckId','expectedRevision','cardId','edits'],{destructive:true}),
- tool('create_deck','Create a deck with 1..100 flashcards, optionally inside folderId. For normal cards write three clues. Use back for the concise answer, optional explanation.sections[] for long explanations (each section has heading and blocks). Legacy long back text remains fully readable via the reader. For an OSCE checklist supply ordered procedureStep metadata on ALL cards; clues may be empty. Images must be attached with two source/pixel check reports; no human approval.',{...op,title:schema,description:schema,folderId:{type:['string','null']},cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','title','cards'],{opens:true}),
- tool('append_cards','Append 1..100 validated cards in sequence; OSCE procedure steps must continue at the next position without gaps.',{...op,...deckFields,cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','deckId','expectedRevision','cards']),
+ tool('patch_card_content','Modify only requested card fields (including set_media_requirement to none / optional / required_for_question / null)  or specific Deep Card pages, preserve other contents and review IDs. Read get_card_content first and pass its deckRevision as expectedRevision. Never directly insert image blocks; use two-stage visual validation.',{...op,...deckFields,cardId:schema,edits:{type:'array',minItems:1,maxItems:20,items:{type:'object',additionalProperties:true}}},['operationId','deckId','expectedRevision','cardId','edits'],{destructive:true}),
+ tool('create_deck','Create a deck with 1..100 flashcards, optionally inside folderId. Each card may optionally specify mediaRequirement: none | optional | required_for_question. Never require images globally; use required_for_question only when the question cannot be answered without the front image. For normal cards write three clues. Use back for the concise answer, optional explanation.sections[] for long explanations (each section has heading and blocks). Legacy long back text remains fully readable via the reader. For an OSCE checklist supply ordered procedureStep metadata on ALL cards; clues may be empty. Images must be attached with two source/pixel check reports; no human approval.',{...op,title:schema,description:schema,folderId:{type:['string','null']},cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','title','cards'],{opens:true}),
+ tool('append_cards','Append 1..100 validated cards in sequence; individual cards may omit images and mediaRequirement entirely. OSCE procedure steps must continue at the next position without gaps.',{...op,...deckFields,cards:{type:'array',minItems:1,maxItems:100,items:{type:'object',additionalProperties:true}}},['operationId','deckId','expectedRevision','cards']),
  tool('update_card','Replace a card using the latest deck revision; optional explanation.sections add long-form material without truncating back.',{...op,...deckFields,cardId:schema,card:{type:'object',additionalProperties:true}},['operationId','deckId','expectedRevision','cardId','card'],{destructive:true}),
  tool('delete_card','Delete a card. A deck must keep at least one card.',{...op,...deckFields,cardId:schema},['operationId','deckId','expectedRevision','cardId'],{destructive:true}),
  tool('rename_deck','Change title/description without overwriting cards.',{...op,...deckFields,title:schema,description:schema},['operationId','deckId','expectedRevision','title']),
  tool('delete_deck','Soft-delete one deck. Does not delete other decks or unrelated media.',{...op,...deckFields},['operationId','deckId','expectedRevision'],{destructive:true}),
  tool('open_deck','Show interactive flashcard player inside ChatGPT.',{deckId:schema},['deckId'],{readOnly:true,opens:true}),
- tool('list_due_cards','Get real SRS due cards and next-review details.',{},[],{readOnly:true}),
+ tool('list_due_cards','Get SRS due cards, omitting explicitly image-dependent questions whose front media is missing. Report blockedMedia separately; ordinary text cards are unaffected.',{},[],{readOnly:true}),
  tool('record_review','Save explicit self-reported card rating; pre-reveal swipes are NOT evidence of correct answers.',{...op,deckId:schema,cardId:schema,rating:{type:'integer',minimum:0,maximum:3},answerRevealed:{type:'boolean'},cluesSeen:{type:'array',items:{type:'integer'}},elapsedMs:{type:'integer'},timedOut:{type:'boolean'}},['operationId','deckId','cardId','rating','answerRevealed','cluesSeen','elapsedMs','timedOut']),
  tool('undo_review','Undo an existing review event without deleting historical evidence.',{...op,reviewId:schema},['operationId','reviewId'],{destructive:true}),
  tool('import_media_bytes','Import actual PNG/JPEG/WebP image bytes as Base64 directly through MCP, without host transfer, file_id, approval or URL. One call up to 256 KiB; use the three chunk tools for bigger images.',{...op,base64:schema,mimeType:schema,fileName:schema,provenance:provenanceSchema},['operationId','base64','mimeType','fileName','provenance']),
@@ -354,7 +370,7 @@ export const TOOLS=[
 ];
 export async function callTool(name,env,owner,args={}){
  switch(name){
-  case 'get_capabilities':return {version:'0.10.1',procedureDecks:{ordered:true,cardLevelSource:true,untimed:true,unhintedSequenceRecall:true,separateQuizEngine:false},folders:{nested:true,maximumDepth:6,safeDelete:true,mcpTools:true},layeredCards:{fullScroll:true,explanationSections:true,readerPanel:true,legacyBackPreserved:true},deepCards:{backPages:true,maximumExtraPages:12,backSwipeNavigates:true,visualValidationPerPage:true},mcpContentEditing:{getCard:true,paginatedDeck:true,search:true,patch:true,revisionGuarded:true},content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'none_automated_integrity_and_two_model_reports',mediaIngest:'direct_mcp_bytes_or_chunks',requiresHostTransferredFileId:false,manualApprovalRequired:false,chunkBytes:98304,preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
+  case 'get_capabilities':return {version:'0.11.0',procedureDecks:{ordered:true,cardLevelSource:true,untimed:true,unhintedSequenceRecall:true,separateQuizEngine:false},folders:{nested:true,maximumDepth:6,safeDelete:true,mcpTools:true},layeredCards:{fullScroll:true,explanationSections:true,readerPanel:true,legacyBackPreserved:true},deepCards:{backPages:true,maximumExtraPages:12,backSwipeNavigates:true,visualValidationPerPage:true},mcpContentEditing:{getCard:true,paginatedDeck:true,search:true,patch:true,revisionGuarded:true},content:'flashcards only',aiProviderCalls:false,imageTypes:['image/png','image/jpeg','image/webp'],maxImageBytes:4_000_000,mediaApproval:'none_automated_integrity_and_two_model_reports',visualCards:{imagesOptional:true,frontAndBack:true,requiredForQuestionExplicit:true,reviewBlockedWhenMissing:true,zoomPan:true},mediaIngest:'direct_mcp_bytes_or_chunks',requiresHostTransferredFileId:false,manualApprovalRequired:false,chunkBytes:98304,preRevealSwipe:true,timerSeconds:20,clueSeconds:[5,10,15],decks:true};
   case 'list_decks':return {decks:await listDecks(env.DB,owner)};
   case 'list_folders':return {folders:await listFolders(env.DB,owner)};
   case 'create_folder':return await createFolder(env,owner,args);
@@ -364,6 +380,7 @@ export async function callTool(name,env,owner,args={}){
   case 'move_deck_to_folder':return await moveDeckToFolder(env,owner,args);
   case 'get_deck':return await deckWithCards(env.DB,owner,required(args.deckId,'deckId'));
   case 'list_card_contents':return await listCardContents(env,owner,args);
+  case 'get_card_media_status':{const deck=await deckWithCards(env.DB,owner,required(args.deckId,'deckId'));const card=deck.cards.find(c=>c.id===args.cardId);if(!card)fail('Card not found',404);return {deckId:deck.id,cardId:card.id,...await cardVisualReadiness(env,owner,card)};}
   case 'get_card_content':return await getCardContent(env,owner,args);
   case 'search_card_contents':return await searchCardContents(env,owner,args);
   case 'patch_card_content':return await patchCardContent(env,owner,args);
@@ -437,7 +454,7 @@ export async function handleMcp(req,env){
  const id=rpc.id??null;let result;
  switch(rpc.method){
   case 'server/discover':result={supportedVersions:['2026-07-28'],capabilities:{tools:{},resources:{}}};break;
-  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.10.1'}};break;
+  case 'initialize':result={protocolVersion:'2025-11-25',capabilities:{tools:{},resources:{}},serverInfo:{name:'noodl-flashcards',version:'0.11.0'}};break;
   case 'notifications/initialized':return new Response(null,{status:202});
   case 'ping':result={};break;
   case 'tools/list':result={tools:TOOLS};break;

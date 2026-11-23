@@ -1,3 +1,4 @@
+import {imageReferences} from '../shared/mediaPolicy.js';
 /**
  * Card-bound double visual inspection. A model report is an auditable CLAIM,
  * not proof that a model actually viewed pixels or verified medical science.
@@ -122,18 +123,13 @@ export async function attachCardVisual(env,owner,args){
  return JSON.parse(saved.result_json);
 }
 export async function assertNoUnapprovedImages(env,owner,deckId,cardId,newCard){
- const locate=card=>[
-  ...(card.front||[]).filter(b=>b.type==='image').map(b=>({assetId:b.assetId,alt:b.alt,pageId:null,side:'front'})),
-  ...(card.back||[]).filter(b=>b.type==='image').map(b=>({assetId:b.assetId,alt:b.alt,pageId:null,side:'back'})),
-  ...(card.backPages||[]).flatMap(p=>(p.blocks||[]).filter(b=>b.type==='image').map(b=>({assetId:b.assetId,alt:b.alt,pageId:p.id,side:'back'})))
- ];
- const images=locate(newCard);
+ const images=imageReferences(newCard);
  if(!images.length)return;
  if(!deckId||!cardId)error('Images must pass card-specific source and visual checks, not be inserted directly in create_deck/append_cards');
  const existing=await cardRow(env,owner,deckId,cardId);
  const hash=await semanticHash(newCard);
  if(hash!==(await semanticHash(existing.card)))error('Changing a card answer requires removing attached images and running new visual checks');
- const oldImages=locate(existing.card);
+ const oldImages=imageReferences(existing.card);
  for(const image of images){
   const index=oldImages.findIndex(x=>x.assetId===image.assetId&&x.alt===image.alt&&x.pageId===image.pageId&&x.side===image.side);
   if(index<0)error('Direct media attachment bypasses card-specific visual validation');
